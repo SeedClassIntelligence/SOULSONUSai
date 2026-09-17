@@ -1,3 +1,50 @@
+/**
+ * What the capture path hands back.
+ *
+ * A discriminated union rather than a boolean, because the interesting case
+ * is the failure and the creator has to be told which failure it was. `reason`
+ * is a sentence for a person, never a code.
+ */
+export type MicResult = { ok: true } | { ok: false; reason: string };
+
+export interface CapturedNote {
+  note: string;
+  midi: number;
+  startTime: number;
+  duration: number;
+  frequency: number;
+}
+
+export type TakeResult =
+  | {
+      ok: true;
+      blob: Blob;
+      durationSeconds: number;
+      waveformPoints: number[];
+      pitchContour: number[];
+      detectedNotes: CapturedNote[];
+      dominantKey: string;
+      fundamentalRange: { lowNote: string; highNote: string; lowFreq: number; highFreq: number };
+    }
+  | { ok: false; reason: string };
+
+/** Turns a getUserMedia rejection into something worth showing a creator. */
+export function describeMicFailure(err: unknown): string {
+  const name = (err as { name?: string } | null)?.name;
+  switch (name) {
+    case 'NotAllowedError':
+    case 'SecurityError':
+      return 'The microphone was not allowed. Grant access and try the take again.';
+    case 'NotFoundError':
+    case 'OverconstrainedError':
+      return 'No microphone was found on this device.';
+    case 'NotReadableError':
+      return 'The microphone is in use by something else.';
+    default:
+      return 'The microphone did not open.';
+  }
+}
+
 class AudioEngineService {
   private ctx: AudioContext | null = null;
   private isPlaying: boolean = false;
@@ -10,7 +57,6 @@ class AudioEngineService {
   private micAnalyser: AnalyserNode | null = null;
   private micSource: MediaStreamAudioSourceNode | null = null;
   private isMicRecording: boolean = false;
-  private simulatedMicInterval: number | null = null;
   private micLevelCallback?: (level: number, waveform: number[]) => void;
   private masterGain: GainNode | null = null;
 
@@ -312,235 +358,184 @@ class AudioEngineService {
   }
 
   // --- Microphone & Recording Support ---
-  public async startMicMonitoring(callback: (level: number, waveform: number[]) => void): Promise<boolean> {
-    this.micLevelCallback = callback;
-    this.isMicRecording = true;
-
-    try {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-        this.micStream = stream;
-        const ctx = this.init();
-        this.micSource = ctx.createMediaStreamSource(stream);
-        this.micAnalyser = ctx.createAnalyser();
-        this.micAnalyser.fftSize = 64;
-        this.micSource.connect(this.micAnalyser);
-
-        const dataArray = new Uint8Array(this.micAnalyser.frequencyBinCount);
-        const update = () => {
-          if (!this.isMicRecording || !this.micAnalyser) return;
-          this.micAnalyser.getByteFrequencyData(dataArray);
-          let sum = 0;
-          const wave: number[] = [];
-          for (let i = 0; i < dataArray.length; i++) {
-            sum += dataArray[i];
-            wave.push(dataArray[i] / 255);
-          }
-          const level = Math.min(1, (sum / dataArray.length) / 140);
-          this.micLevelCallback?.(level, wave.slice(0, 16));
-          requestAnimationFrame(update);
-        };
-        update();
-        return true;
-      }
-    } catch {
-      // Fallback to simulated audio input if permission denied or no mic device
+  /**
+   * Opens the microphone and reports its level and waveform.
+   *
+   * There used to be a fallback here. When getUserMedia threw -- permission
+   * denied, no device, a frame that forbids it -- this generated a waveform
+   * out of a sine and a cosine and fed it to the meter on a 60 ms interval,
+   * and returned true. A creator who had denied the microphone watched a
+   * level move and a waveform draw while the studio heard nothing at all.
+   *
+   * A meter is an instrument. It reports what is there or it reports that
+   * nothing is. It does not perform.
+   */
+  public async startMicMonitoring(
+    callback: (level: number, waveform: number[]) => void
+  ): Promise<MicResult> {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      return { ok: false, reason: 'This browser does not offer microphone access.' };
     }
 
-    // High fidelity simulated microphone waveform generator
-    let phase = 0;
-    this.simulatedMicInterval = window.setInterval(() => {
-      if (!this.isMicRecording) return;
-      phase += 0.2;
-      const noise = (Math.sin(phase * 3) + Math.cos(phase * 7)) * 0.3 + 0.35;
-      const wave = Array.from({ length: 16 }, (_, i) => Math.max(0.1, Math.min(0.9, noise + Math.sin(phase + i * 0.4) * 0.25)));
-      this.micLevelCallback?.(noise, wave);
-    }, 60);
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    } catch (err) {
+      return { ok: false, reason: describeMicFailure(err) };
+    }
 
-    return true;
+    this.micLevelCallback = callback;
+    this.isMicRecording = true;
+    this.micStream = stream;
+
+    const ctx = this.init();
+    this.micSource = ctx.createMediaStreamSource(stream);
+    this.micAnalyser = ctx.createAnalyser();
+    this.micAnalyser.fftSize = 64;
+    this.micSource.connect(this.micAnalyser);
+
+    const dataArray = new Uint8Array(this.micAnalyser.frequencyBinCount);
+    const update = () => {
+      if (!this.isMicRecording || !this.micAnalyser) return;
+      this.micAnalyser.getByteFrequencyData(dataArray);
+      let sum = 0;
+      const wave: number[] = [];
+      for (let i = 0; i < dataArray.length; i++) {
+        sum += dataArray[i];
+        wave.push(dataArray[i] / 255);
+      }
+      const level = Math.min(1, sum / dataArray.length / 140);
+      this.micLevelCallback?.(level, wave.slice(0, 16));
+      requestAnimationFrame(update);
+    };
+    update();
+
+    return { ok: true };
   }
+
 
   private activeMediaRecorder: MediaRecorder | null = null;
   private recordedChunks: Blob[] = [];
   private recordingStartTime: number = 0;
   private activeAudioElement: HTMLAudioElement | null = null;
 
-  // --- Real Audio Capture (MediaRecorder + Web Audio Analysis) ---
-  public async startRealRecording(): Promise<boolean> {
+  /**
+   * Arms the recorder, or says why it could not.
+   *
+   * This returned true unconditionally. When getUserMedia or MediaRecorder
+   * failed it warned about "pristine synthetic capture" and carried on, and
+   * stopRealRecording then manufactured a WAV to stand in for the take. That
+   * blob was hashed, signed and filed as the creator's own original work.
+   * There is no substitute for a performance. If the microphone did not open,
+   * that is the result.
+   */
+  public async startRealRecording(): Promise<MicResult> {
     this.recordedChunks = [];
-    this.recordingStartTime = Date.now();
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      return { ok: false, reason: 'This browser does not offer microphone access.' };
+    }
+    if (typeof MediaRecorder === 'undefined') {
+      return { ok: false, reason: 'This browser cannot record audio (no MediaRecorder).' };
+    }
+
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      return { ok: false, reason: describeMicFailure(err) };
+    }
+
+    this.micStream = stream;
+
+    let mimeType = 'audio/webm;codecs=opus';
+    if (!MediaRecorder.isTypeSupported(mimeType)) {
+      mimeType = MediaRecorder.isTypeSupported('audio/webm')
+        ? 'audio/webm'
+        : MediaRecorder.isTypeSupported('audio/mp4')
+        ? 'audio/mp4'
+        : '';
+    }
 
     try {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        this.micStream = stream;
-
-        // Choose best supported mimeType
-        let mimeType = 'audio/webm;codecs=opus';
-        if (typeof MediaRecorder !== 'undefined') {
-          if (!MediaRecorder.isTypeSupported(mimeType)) {
-            mimeType = MediaRecorder.isTypeSupported('audio/webm')
-              ? 'audio/webm'
-              : MediaRecorder.isTypeSupported('audio/mp4')
-              ? 'audio/mp4'
-              : '';
-          }
-          this.activeMediaRecorder = mimeType
-            ? new MediaRecorder(stream, { mimeType })
-            : new MediaRecorder(stream);
-
-          this.activeMediaRecorder.ondataavailable = (e) => {
-            if (e.data && e.data.size > 0) {
-              this.recordedChunks.push(e.data);
-            }
-          };
-
-          this.activeMediaRecorder.start(100);
-          this.isMicRecording = true;
-          return true;
-        }
-      }
-    } catch (e) {
-      console.warn('Microphone permission not granted or MediaRecorder unavailable, using pristine synthetic capture:', e);
+      this.activeMediaRecorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
+    } catch (err) {
+      this.releaseMicStream();
+      return { ok: false, reason: describeMicFailure(err) };
     }
 
-    // Mark as recording even if using synth buffer fallback
+    this.activeMediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) this.recordedChunks.push(e.data);
+    };
+
+    this.recordingStartTime = Date.now();
+    this.activeMediaRecorder.start(100);
     this.isMicRecording = true;
-    return true;
+    return { ok: true };
   }
 
-  public async stopRealRecording(mode: string = 'HUM'): Promise<{
-    blob: Blob;
-    durationSeconds: number;
-    waveformPoints: number[];
-    pitchContour: number[];
-    detectedNotes: { note: string; midi: number; startTime: number; duration: number; frequency: number }[];
-    dominantKey: string;
-    fundamentalRange: { lowNote: string; highNote: string; lowFreq: number; highFreq: number };
-  }> {
-    const elapsedSeconds = Math.max(1.2, (Date.now() - this.recordingStartTime) / 1000);
-    this.isMicRecording = false;
-
-    let audioBlob: Blob | null = null;
-
-    if (this.activeMediaRecorder && this.activeMediaRecorder.state !== 'inactive') {
-      await new Promise<void>((resolve) => {
-        if (!this.activeMediaRecorder) return resolve();
-        this.activeMediaRecorder.onstop = () => resolve();
-        this.activeMediaRecorder.stop();
-      });
-
-      if (this.recordedChunks.length > 0) {
-        audioBlob = new Blob(this.recordedChunks, {
-          type: this.activeMediaRecorder.mimeType || 'audio/webm',
-        });
-      }
-    }
-
-    // Stop mic stream tracks
+  /** Releases the input stream. Safe to call when nothing is open. */
+  private releaseMicStream() {
     if (this.micStream) {
       this.micStream.getTracks().forEach((t) => t.stop());
       this.micStream = null;
     }
+  }
 
-    // If no real chunks captured (e.g. iframe permissions restricted), synthesize real 16-bit WAV audio
-    if (!audioBlob || audioBlob.size === 0) {
-      audioBlob = this.synthesizeModeWavBlob(mode, elapsedSeconds);
+  /**
+   * Ends the take and hands back what was actually captured.
+   *
+   * Returns a failure rather than a stand-in. An empty recording is a real
+   * outcome -- the creator pressed record and stop without performing, or the
+   * stream produced nothing -- and it is reported as one. Nothing downstream
+   * should ever receive audio this method invented, because everything
+   * downstream hashes it and calls it the creator's.
+   */
+  public async stopRealRecording(mode: string = 'HUM'): Promise<TakeResult> {
+    const elapsedSeconds = (Date.now() - this.recordingStartTime) / 1000;
+    this.isMicRecording = false;
+
+    const recorder = this.activeMediaRecorder;
+    this.activeMediaRecorder = null;
+
+    if (!recorder) {
+      this.releaseMicStream();
+      return { ok: false, reason: 'Nothing was recording, so there is no take to keep.' };
     }
 
-    // Extract real analysis from audio buffer
-    const analysis = await this.analyzeAudioBlob(audioBlob, mode);
+    if (recorder.state !== 'inactive') {
+      await new Promise<void>((resolve) => {
+        recorder.onstop = () => resolve();
+        recorder.stop();
+      });
+    }
+
+    this.releaseMicStream();
+
+    if (this.recordedChunks.length === 0) {
+      return { ok: false, reason: 'The microphone was open but captured nothing.' };
+    }
+
+    const blob = new Blob(this.recordedChunks, { type: recorder.mimeType || 'audio/webm' });
+    this.recordedChunks = [];
+
+    if (blob.size === 0) {
+      return { ok: false, reason: 'The microphone was open but captured nothing.' };
+    }
+
+    const analysis = await this.analyzeAudioBlob(blob, mode);
 
     return {
-      blob: audioBlob,
+      ok: true,
+      blob,
       durationSeconds: Math.round(elapsedSeconds * 10) / 10,
       ...analysis,
     };
   }
 
-  // Synthesizes an actual 16-bit PCM WAV audio buffer matching the creator's mode
-  private synthesizeModeWavBlob(mode: string, durationSec: number): Blob {
-    const sampleRate = 44100;
-    const numSamples = Math.floor(sampleRate * durationSec);
-    const audioBuffer = new Float32Array(numSamples);
 
-    const isHum = mode.toUpperCase().includes('HUM') || mode.toUpperCase().includes('MELODY') || mode.toUpperCase().includes('SING');
-    const isBeatbox = mode.toUpperCase().includes('BEATBOX') || mode.toUpperCase().includes('CLAP') || mode.toUpperCase().includes('TAP');
-
-    // Fundamental notes in C Minor
-    const cMinorFrequencies = [130.81, 146.83, 155.56, 174.61, 196.0, 233.08, 261.63]; // C3, D3, Eb3, F3, G3, Bb3, C4
-
-    for (let i = 0; i < numSamples; i++) {
-      const t = i / sampleRate;
-      if (isHum) {
-        // Melodic vocal hum with warm vibrato & harmonics
-        const noteIndex = Math.floor((t / (durationSec / 4))) % cMinorFrequencies.length;
-        const f0 = cMinorFrequencies[noteIndex] + Math.sin(t * 30) * 1.5; // vibrato
-        const f1 = f0 * 2;
-        const f2 = f0 * 3;
-        const env = Math.min(1, t * 10) * Math.max(0, 1 - (t % 0.8));
-        audioBuffer[i] =
-          (Math.sin(2 * Math.PI * f0 * t) * 0.5 +
-            Math.sin(2 * Math.PI * f1 * t) * 0.25 +
-            Math.sin(2 * Math.PI * f2 * t) * 0.12) *
-          env;
-      } else if (isBeatbox) {
-        // Rhythmic kick / snare / hat transients
-        const beatPos = (t * 2) % 1; // 2 beats per sec (120 BPM)
-        if (beatPos < 0.2) {
-          // Kick thump
-          const kickFreq = 140 * Math.exp(-beatPos * 25) + 38;
-          audioBuffer[i] = Math.sin(2 * Math.PI * kickFreq * beatPos) * Math.exp(-beatPos * 12) * 0.8;
-        } else {
-          audioBuffer[i] = (Math.random() * 2 - 1) * 0.05;
-        }
-      } else {
-        // Spoken / vocal take
-        audioBuffer[i] = Math.sin(2 * Math.PI * 180 * t) * 0.3 * (0.8 + 0.2 * Math.sin(t * 6));
-      }
-    }
-
-    return this.encodeWav(audioBuffer, sampleRate);
-  }
-
-  // Encodes Float32Array into standard RIFF PCM 16-bit WAV
-  private encodeWav(samples: Float32Array, sampleRate: number): Blob {
-    const buffer = new ArrayBuffer(44 + samples.length * 2);
-    const view = new DataView(buffer);
-
-    const writeString = (offset: number, string: string) => {
-      for (let i = 0; i < string.length; i++) {
-        view.setUint8(offset + i, string.charCodeAt(i));
-      }
-    };
-
-    // RIFF chunk descriptor
-    writeString(0, 'RIFF');
-    view.setUint32(4, 36 + samples.length * 2, true);
-    writeString(8, 'WAVE');
-    // FMT sub-chunk
-    writeString(12, 'fmt ');
-    view.setUint32(16, 16, true); // SubChunk1Size (16 for PCM)
-    view.setUint16(20, 1, true); // AudioFormat (1 = PCM)
-    view.setUint16(22, 1, true); // NumChannels (1 = Mono)
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * 2, true); // ByteRate
-    view.setUint16(32, 2, true); // BlockAlign
-    view.setUint16(34, 16, true); // BitsPerSample
-    // Data sub-chunk
-    writeString(36, 'data');
-    view.setUint32(40, samples.length * 2, true);
-
-    // Write 16-bit PCM samples
-    let offset = 44;
-    for (let i = 0; i < samples.length; i++) {
-      const s = Math.max(-1, Math.min(1, samples[i]));
-      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-      offset += 2;
-    }
-
-    return new Blob([view], { type: 'audio/wav' });
-  }
 
   // Audio Analysis: extracts F0 pitch contour, detected MIDI notes, and waveform points
   public async analyzeAudioBlob(
@@ -697,10 +692,6 @@ class AudioEngineService {
 
   public stopMicMonitoring() {
     this.isMicRecording = false;
-    if (this.simulatedMicInterval !== null) {
-      clearInterval(this.simulatedMicInterval);
-      this.simulatedMicInterval = null;
-    }
     if (this.micStream) {
       this.micStream.getTracks().forEach(track => track.stop());
       this.micStream = null;

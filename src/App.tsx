@@ -85,6 +85,9 @@ export default function App() {
   // Transport & Audio State
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [isRecording, setIsRecording] = useState<boolean>(false);
+  // What the studio has to tell the creator about the microphone. Null when
+  // there is nothing to say -- never a cheerful default.
+  const [captureNotice, setCaptureNotice] = useState<string | null>(null);
   const [isMetroOn, setIsMetroOn] = useState<boolean>(false);
   const [playheadTime, setPlayheadTime] = useState<string>('01:02:14');
   const [currentBar, setCurrentBar] = useState<number>(1);
@@ -165,46 +168,57 @@ export default function App() {
     setPlayheadSeconds(0);
   };
 
+  /**
+   * Record, and keep only what was actually captured.
+   *
+   * Both halves used to swallow their failure. Starting caught the error and
+   * left the transport lit as though it were recording; stopping caught it
+   * and filed a take anyway, with a manufactured blob behind it. Now each one
+   * says what happened and the session is left alone when nothing was heard.
+   */
   const toggleRecord = async () => {
     if (isRecording) {
       setIsRecording(false);
-      try {
-        const res = await audioEngine.stopRealRecording('SING');
-        const durationSec = Math.max(1, res.durationSeconds);
-        const asset = await assetStore.registerAudioAsset(
-          'Lead Vocal · Take 2 (Fresh Booth Capture)',
-          res.blob,
-          'booth_recording',
-          durationSec,
-          {
-            mode: 'SING',
-            pitchContour: res.pitchContour,
-            detectedNotes: res.detectedNotes,
-            waveformPoints: res.waveformPoints,
-          }
-        );
-        handleNewRecordingTake(
-          'Lead Vocal · Take 2 (Fresh Booth Capture)',
-          'RECORD AUDIO',
-          asset.id,
-          res.waveformPoints,
-          res.detectedNotes.join(' → ')
-        );
-      } catch (err) {
-        console.error('Booth recording finalize notice:', err);
-        handleNewRecordingTake('Lead Vocal · Take 2 (Fresh Booth Capture)', 'RECORD AUDIO');
+      const res = await audioEngine.stopRealRecording('SING');
+
+      if (!res.ok) {
+        setCaptureNotice(`${res.reason} Nothing was added to the session.`);
+        return;
       }
-    } else {
-      setIsRecording(true);
-      if (!isPlaying) {
-        togglePlay();
-      }
-      try {
-        await audioEngine.startRealRecording();
-      } catch (e) {
-        console.warn('Real microphone notice:', e);
-      }
+
+      const asset = await assetStore.registerAudioAsset(
+        'Lead Vocal · Booth Capture',
+        res.blob,
+        'booth_recording',
+        Math.max(0.1, res.durationSeconds),
+        {
+          mode: 'SING',
+          pitchContour: res.pitchContour,
+          detectedNotes: res.detectedNotes,
+          waveformPoints: res.waveformPoints,
+        }
+      );
+
+      handleNewRecordingTake(
+        'Lead Vocal · Booth Capture',
+        'RECORD AUDIO',
+        asset.id,
+        res.waveformPoints,
+        res.detectedNotes.map((n) => n.note).join(' → ')
+      );
+      setCaptureNotice(null);
+      return;
     }
+
+    const armed = await audioEngine.startRealRecording();
+    if (!armed.ok) {
+      setCaptureNotice(armed.reason);
+      return;
+    }
+
+    setCaptureNotice(null);
+    setIsRecording(true);
+    if (!isPlaying) togglePlay();
   };
 
   const toggleMetro = () => {
@@ -705,6 +719,30 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen w-screen bg-slate-950 text-slate-100 overflow-hidden font-sans antialiased select-none">
+      {/* What the microphone actually did. It says nothing when there is
+          nothing to say, and it is never reassuring on principle: if a take
+          was not captured, this is where the creator finds out, rather than
+          discovering later that the waveform in their library is not theirs. */}
+      {captureNotice && (
+        <div
+          role="status"
+          data-testid="capture-notice"
+          className="shrink-0 bg-rose-950/90 border-b border-rose-500/50 px-4 py-2 flex items-center justify-between gap-4 font-mono text-[11px]"
+        >
+          <span className="text-rose-200">
+            <span className="font-black tracking-wider text-rose-400">MICROPHONE · </span>
+            {captureNotice}
+          </span>
+          <button
+            type="button"
+            onClick={() => setCaptureNotice(null)}
+            className="shrink-0 px-2 py-0.5 rounded border border-rose-500/40 text-rose-300 hover:bg-rose-900/60 transition cursor-pointer font-bold"
+          >
+            DISMISS
+          </button>
+        </div>
+      )}
+
       {/* 1. Header / Top bar with branding & transport */}
       <StudioTopBar
         metadata={metadata}

@@ -49,16 +49,31 @@ export const TheBoothView: React.FC<TheBoothViewProps> = ({
     'MELODY',
   ];
 
-  // Initialize live audio level / waveform visualization
+  // The live level and waveform, or the reason there is neither.
+  //
+  // This used to ignore the result. The engine answered a refused microphone
+  // with a generated waveform, so the booth animated either way and the
+  // creator had no way to tell a live input from a drawing of one.
+  const [micNotice, setMicNotice] = useState<string | null>(null);
+
   useEffect(() => {
     let isActive = true;
-    audioEngine.startMicMonitoring((level, wave) => {
+
+    void (async () => {
+      const opened = await audioEngine.startMicMonitoring((level, wave) => {
+        if (!isActive) return;
+        setMicLevel(level);
+        if (wave && wave.length > 0) setWaveformBars(wave);
+      });
       if (!isActive) return;
-      setMicLevel(level);
-      if (wave && wave.length > 0) {
-        setWaveformBars(wave);
+      if (opened.ok) {
+        setMicNotice(null);
+      } else {
+        setMicNotice(opened.reason);
+        setMicLevel(0);
+        setWaveformBars([]);
       }
-    });
+    })();
 
     return () => {
       isActive = false;
@@ -194,6 +209,15 @@ export const TheBoothView: React.FC<TheBoothViewProps> = ({
           <p className="text-xs text-slate-400">
             Your performance records directly into the selected DAW track.
           </p>
+
+          {micNotice && (
+            <p
+              data-testid="booth-mic-notice"
+              className="mt-2 inline-block text-xs font-mono text-rose-300 bg-rose-950/60 border border-rose-500/40 rounded-lg px-3 py-2"
+            >
+              {micNotice}
+            </p>
+          )}
         </div>
       </div>
 

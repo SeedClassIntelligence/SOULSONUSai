@@ -67,7 +67,16 @@ types. No provider runs. There are zero `fetch` calls in the application.
 One step IN PROGRESS at a time. Steps are ordered so each one makes the next
 possible; do not reorder without the owner saying so.
 
-### Step 1 — Stop the studio manufacturing performances · **NEXT**
+### Step 0 — The export could not install · **DONE** `2026-09-17`
+
+Not planned; found on the first `npm install`. `esbuild@^0.25.0` sat in
+devDependencies against `vite@8.3.0`, which wants `^0.27.0 || ^0.28.0`.
+Nothing in the project imports esbuild — the build is `vite build` — so the
+package was removed rather than pinned. `express`, `dotenv`, `tsx`,
+`autoprefixer` and `@google/genai` are also unused and were **left alone**;
+they are §3.8, not this step.
+
+### Step 1 — Stop the studio manufacturing performances · **DONE** `2026-09-17`
 
 The highest-priority defect in the codebase (§3.1). When the microphone fails,
 the studio synthesizes a WAV, hashes it, and files it as the creator's own
@@ -82,7 +91,7 @@ original work.
 **Done when:** the microphone is denied in a browser, and the studio says so
 and writes nothing. No asset is created.
 
-### Step 2 — Make the analysis report only what it measured
+### Step 2 — Make the analysis report only what it measured · **NEXT**
 
 §3.2. The autocorrelation is real; three things around it are not.
 
@@ -152,7 +161,7 @@ BGV. Each is a step of its own and none is started before step 6 closes.
 Verified in the source at the line given. **Do not fix one because you read
 it here** — it is fixed by the step that owns it.
 
-### 3.1 The studio manufactures performances · Step 1
+### 3.1 The studio manufactures performances · **CLOSED** by Step 1
 
 `src/services/audioEngine.ts` — `startRealRecording` catches a `getUserMedia`
 or `MediaRecorder` failure, warns *"using pristine synthetic capture"*, and
@@ -170,7 +179,11 @@ registers it in the immutable asset store with a SHA-256, `originType:
 'creator_hum'`, a `provenanceSeedSignature`, tags including `'creator-roots'`
 and descriptors reading `'Original Performance'` and `'Verified SHA-256'`.
 
-A denied microphone therefore produces a performance the creator never gave,
+**Resolved.** `synthesizeModeWavBlob` and its WAV encoder are deleted, the
+simulated monitoring waveform is deleted, and the capture path returns a
+discriminated union so no caller can reach a take that does not exist without
+the compiler stopping them. A denied microphone used to produce a performance
+the creator never gave,
 signed as their original work. Voice Profile, My Sounds, rights and
 SeedSignature all inherit it. It exists because the generator runs in an
 iframe where permission can be refused and the demo had to survive — an
@@ -188,6 +201,19 @@ creator origin.
 - The `catch` returns a fabricated four-note analysis with frequencies.
 
 The waveform RMS and the autocorrelation above them are real.
+
+### 3.2b Detected notes are stringified objects · Step 2
+
+`CreatorTrainingView` and `App` both build a take's note summary with
+`detectedNotes.join(' → ')` over an array of objects, which renders
+`[object Object] → [object Object]`. `App` is fixed as a side effect of Step 1
+(it now maps `.note`); Creator Training still does it.
+
+### 3.2c A provider that does not run is named in the result · Step 2
+
+`CreatorTrainingView` labels an empty detection
+`'C3 → Eb3 → G3 (Extracted via Basic Pitch)'`. Basic Pitch is not wired. The
+notes are invented and the attribution is false.
 
 ### 3.3 The mix desk is not the project · Step 5
 
@@ -272,4 +298,6 @@ or only written, and the commit.
 | Date | What | Evidence | Commit |
 |---|---|---|---|
 | 2026-09-17 | Studio export unpacked from the zip, unedited. Verified byte-identical to the archive reviewed. | watched — file count and diff | `e047bae` |
-| 2026-09-17 | This ledger and the working rules. | written | *this commit* |
+| 2026-09-17 | This ledger and the working rules. | written | `ce2a1fc` |
+| 2026-09-17 | Step 0 — removed the unused `esbuild` that blocked `npm install`. | watched — install, tsc and build all pass | `pending` |
+| 2026-09-17 | Step 1 — the studio no longer manufactures performances. | **watched** — microphone denied in Chromium: Creator Training and the Booth each state the reason, the badge reads MIC UNAVAILABLE, the record button stays offering to record, and IndexedDB holds **0** assets | `pending` |

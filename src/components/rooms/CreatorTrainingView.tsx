@@ -353,6 +353,9 @@ export const CreatorTrainingView: React.FC<CreatorTrainingViewProps> = ({
   const [soundFilter, setSoundFilter] = useState<string>('All');
   const [auditioningId, setAuditioningId] = useState<string | null>(null);
   const [addedNotice, setAddedNotice] = useState<string | null>(null);
+  // Why a take did not happen. Shown where the record button is, because that
+  // is where the creator is looking when it does not.
+  const [captureNotice, setCaptureNotice] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const showNotification = (msg: string) => {
@@ -391,15 +394,19 @@ export const CreatorTrainingView: React.FC<CreatorTrainingViewProps> = ({
 
   const handleToggleRecord = async () => {
     if (!isRecording) {
-      // Start Recording via Web Audio / MediaRecorder
+      // Arm first, and only show the room as recording if it actually is.
+      // This used to set isRecording before asking, and swallow the refusal,
+      // so a denied microphone left the room counting up a take nobody was
+      // capturing.
+      const armed = await audioEngine.startRealRecording();
+      if (!armed.ok) {
+        setCaptureNotice(armed.reason);
+        return;
+      }
+      setCaptureNotice(null);
       setIsRecording(true);
       setAnalysisStatus('WAITING');
       audioEngine.playClick(true);
-      try {
-        await audioEngine.startRealRecording();
-      } catch (e) {
-        console.warn('Real recording initialization notice:', e);
-      }
     } else {
       // Stop Recording & Auto-Trigger SoulSonus Analysis
       setIsRecording(false);
@@ -408,6 +415,16 @@ export const CreatorTrainingView: React.FC<CreatorTrainingViewProps> = ({
 
       try {
         const realResult = await audioEngine.stopRealRecording(activeCaptureMode);
+
+        // No take, no asset. Nothing is written to the creator's library on
+        // the strength of a recording that did not happen.
+        if (!realResult.ok) {
+          setCaptureNotice(`${realResult.reason} Nothing was saved.`);
+          setAnalysisStatus('WAITING');
+          return;
+        }
+
+        setCaptureNotice(null);
         const audioBlob = realResult.blob;
         const durationSeconds = Math.max(0.6, realResult.durationSeconds);
         const waveformPoints =
@@ -893,8 +910,21 @@ export const CreatorTrainingView: React.FC<CreatorTrainingViewProps> = ({
                   <h2 className="text-sm font-bold text-slate-100 tracking-wide">
                     Live Capture
                   </h2>
-                  <span className="bg-[#0b1b2d] border border-sky-500/40 text-sky-400 text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-full shadow-sm">
-                    MIC READY
+                  {/* This read MIC READY always -- a literal, lit blue, while
+                      the microphone had never been asked for and might not
+                      exist. A badge is a readout. Until the room has actually
+                      opened the input it says so. */}
+                  <span
+                    data-testid="mic-state"
+                    className={`text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-full shadow-sm border ${
+                      captureNotice
+                        ? 'bg-rose-950/70 border-rose-500/50 text-rose-300'
+                        : isRecording
+                        ? 'bg-[#0b1b2d] border-sky-500/40 text-sky-400'
+                        : 'bg-slate-900 border-slate-700 text-slate-400'
+                    }`}
+                  >
+                    {captureNotice ? 'MIC UNAVAILABLE' : isRecording ? 'MIC OPEN' : 'MIC NOT CHECKED'}
                   </span>
                 </div>
 
@@ -1060,6 +1090,18 @@ export const CreatorTrainingView: React.FC<CreatorTrainingViewProps> = ({
                   <p className="text-xs text-slate-400 font-sans">
                     Capture mode: <strong className="text-slate-200">{activeCaptureMode}</strong>. SoulSonus will analyze with this intent.
                   </p>
+
+                  {/* Why there is no take. Directly under the record button,
+                      because that is where the creator is looking when one
+                      does not happen. */}
+                  {captureNotice && (
+                    <p
+                      data-testid="training-capture-notice"
+                      className="text-xs font-mono text-rose-300 bg-rose-950/60 border border-rose-500/40 rounded-lg px-3 py-2 max-w-sm"
+                    >
+                      {captureNotice}
+                    </p>
+                  )}
                 </div>
 
                 {/* BOTTOM TOOLBAR: Count-in, Metronome, Loop Capture, Auto Tempo, Keep Raw */}
