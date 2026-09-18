@@ -167,7 +167,7 @@ harness, and both halves were invisible to every harness written so far — the
 slice test drove Creator Training, which does not touch the transport, and
 never pressed the stop button at all.
 
-### Step 4 — Basic Pitch, in the browser · **NEXT**
+### Step 4 — Basic Pitch, in the browser · **DONE** `2026-09-18`
 
 Replace the eight-slice autocorrelation with the real model. It is a 232 KB
 ONNX file on `onnxruntime-web`; it needs no server, no GPU and no Python.
@@ -176,7 +176,25 @@ ONNX file on `onnxruntime-web`; it needs no server, no GPU and no Python.
 judged by the owner's ear (Amendment B.v), and the studio still works with the
 model absent.
 
-### Step 5 — The mix desk reads the project
+**Closed on the measurable half.** `@spotify/basic-pitch@1.0.1` is installed
+and wired behind `src/services/providers/basicPitchProvider.ts`. The
+hand-written autocorrelation is **deleted**, not left beside it.
+
+Measured: eleven tones, 110–659 Hz, sine and four-harmonic, every fundamental
+found at **0 cents**. The full slice still holds end to end — a C4 hum through
+the microphone reads `["C4","C5","C5","C4"]`: the fundamental and its second
+harmonic, which is a polyphonic model doing its job, and something the
+monophonic estimator could not have told us.
+
+**Zero external requests.** The model is served from `/models/basic-pitch/`
+and TensorFlow runs in the page. No server, no GPU, no Python, no network.
+Verified by recording every request the page makes: the only outbound call in
+the whole application is Google Fonts, from `index.html`.
+
+**Still the owner's to judge:** whether a real hum from a real microphone
+comes back as the note they meant. Amendment B.v — not mine to close.
+
+### Step 5 — The mix desk reads the project · **NEXT**
 
 §3.3 and §3.4. The desk builds eight hardcoded channels and animates its
 meters with `Math.random()`.
@@ -579,7 +597,7 @@ bass line meant to lock with the kick. That is ours.
 
 | Capability | Room · control | Today | Part | Runs | Licence |
 |---|---|---|---|---|---|
-| `perception.notes.transcribe` | Booth, Creator Training → RECORD | hand-written autocorrelation, 8 slices | **Basic Pitch** | in-browser, ONNX ~232 KB on onnxruntime-web | Apache-2.0 code and weights — **verify** |
+| `perception.notes.transcribe` | Booth, Creator Training → RECORD | ✅ **WIRED** — `@spotify/basic-pitch@1.0.1` | **Basic Pitch** | in-browser, TF.js, ~904 KB weights shipped in the package | **Apache-2.0 verified** — code and weights, read from the installed LICENSE |
 | `perception.pitch.extract` | Voice Profile, Booth | same | **Basic Pitch**, **CREPE** for continuous f0 | in-browser / service | UNVERIFIED |
 | `perception.onset.detect` | Beatbox, Clap/Tap | nothing | **BeatNet** | service | UNVERIFIED |
 | `perception.beat.detect` · `tempo.estimate` | Rhythm Profile, TAP | `TAP` button is UI only | **BeatNet** live, **Beat This** offline | service | UNVERIFIED |
@@ -650,7 +668,7 @@ These are the product. No provider is registered for them and none should be.
 
 ### 7.6 First provider set, in order
 
-1. **Basic Pitch** — in-browser, no server, no GPU. Unblocks Booth, Creator Training, Voice Profile, Instrument Workstation.
+1. ~~**Basic Pitch**~~ — ✅ **DONE**, Step 4. In-browser, no server, no GPU, no network.
 2. **faster-whisper** — Songwriting, Speak, and the front half of Vocal-to-Lyric.
 3. **Demucs v4** — My Sounds import, Instrument Workstation, Mix.
 4. **BeatNet** — Beatbox, Clap/Tap, Rhythm Profile, tempo.
@@ -681,6 +699,31 @@ Nothing in this table is marked verified. **Reading them is a task, and it is
 not done.**
 
 
+### 7.8 Execution status, reconciled against the code
+
+The owner's `SoulSonus_OSS_Execution_Status_v2.csv`, checked row by row against
+this repository on 2026-09-18. Two rows had already moved; one row of mine was
+wrong.
+
+| Capability | Owner's status | Verified here |
+|---|---|---|
+| `source.audio.capture` | YES — "remove synthetic-origin ambiguity" | ✅ and **the ambiguity is gone** — Step 1 deleted the synthesizer |
+| `perception.pitch.extract` | NO — custom autocorrelation | ✅ **now YES** — Step 4, Basic Pitch wired, autocorrelation deleted |
+| `perception.beat.detect` | NO — none | confirmed, nothing |
+| `interpretation.beatbox.classify` | NO — none | confirmed, nothing |
+| `transcription.vocal` | NO — none | confirmed, nothing |
+| `alignment.lyric.word` | NO — none | confirmed — the room plays three fixed tones (§6.3) |
+| `separation.stem` | NO — none | confirmed, nothing |
+| all six ACE-Step rows | NO — none | confirmed, nothing |
+| `session.player.live` | NO — persona/UI only | confirmed — a take is one sawtooth note (§6.3) |
+| `vocal.harmony.render` | NO — synthetic audition only | confirmed — one sine per vocalist (§6.3) |
+| `master.measure.loudness` | NO — simulated telemetry | confirmed — a progress bar on a timer (§6.3) |
+| `asset.persist` | YES — IndexedDB | ✅ confirmed, with SHA-256 |
+| `project.persist` | PARTIAL — "fix hydration race + persist Creator Intelligence" | ✅ **both done** — Step 3, §3.9 and §3.10 |
+| `collaboration.sync.local` | YES — BroadcastChannel | ✅ confirmed at `CollaborationRoomView.tsx:185`. **My §6 missed this** — I grepped for network calls and BroadcastChannel is not one |
+| `collaboration.sync.network` | NO — none | confirmed, no Yjs, no WebSocket |
+| `delivery.stem.package` | PARTIAL — "replace synthetic/demo renders" | confirmed, and it is §3.13 — the zip is real, the audio in it is synthesized |
+
 ---
 
 ## 5. Log
@@ -697,4 +740,6 @@ or only written, and the commit.
 | 2026-09-18 | Step 2 — the analysis reports only what it measured, and the import reads its own file. | **watched** — silence, a 220 Hz tone and undecodable bytes each analysed in the browser; no notes invented, no key claimed, real sample rate and duration | `a03b11d` |
 | 2026-09-18 | Step 2b — the pitch estimator reads the right note in the right octave. | **watched** — `scripts/verify-pitch.cjs`: 11 tones, 110–659 Hz, sine and four-harmonic, all 0 cents. Was reading 440 Hz as 110 Hz | `731f371` |
 | 2026-09-18 | Step 3 — the HUM slice holds end to end, through a reload. | **watched** — `scripts/verify-hum-slice.cjs` with a C4 hum as the capture device: 51,773 bytes hashed and stored, read as C4, library and clip persisted, blob re-decoded after reload at 3.12s / 44100 Hz / peak 0.502 | `1c9c429` |
-| 2026-09-18 | Step 3b — record no longer starts the song, and stop keeps the take. | **watched** — reported by the owner from live use; `scripts/verify-booth-transport.cjs`: playhead unmoved through a 2.5s take, and pressing stop stored a 41,051-byte booth take that was previously discarded | `pending` |
+| 2026-09-18 | Step 3b — record no longer starts the song, and stop keeps the take. | **watched** — reported by the owner from live use; `scripts/verify-booth-transport.cjs`: playhead unmoved through a 2.5s take, and pressing stop stored a 41,051-byte booth take that was previously discarded | `3fbfc88` |
+| 2026-09-18 | §6 and §7 — the granular audit, and the binding open-source table. | written | `76b31da`, `26a8568` |
+| 2026-09-18 | Step 4 — Basic Pitch replaces the hand-written estimator. | **watched** — 11 tones all 0 cents; a C4 hum through the mic reads C4 + its harmonic; zero external requests | `pending` |

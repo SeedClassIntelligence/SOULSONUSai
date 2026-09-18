@@ -6,3 +6,7 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Copied from @spotify/basic-pitch by scripts/copy-basic-pitch-model.mjs.
+# The package is the source of truth for its own weights.
+public/models/

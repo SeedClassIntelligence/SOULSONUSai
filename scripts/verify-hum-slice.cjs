@@ -70,7 +70,8 @@ const dump = async (page, label) => {
   });
   const ctx = await b.newContext({ viewport: { width: 1680, height: 1050 }, permissions: ['microphone'] });
   const p = await ctx.newPage();
-  const errs = []; p.on('pageerror', e => errs.push(String(e).slice(0, 200)));
+  const errs = []; p.on('pageerror', e => errs.push('PAGEERROR ' + String(e).slice(0, 200)));
+  p.on('console', m => { if (m.type() === 'error' || m.type() === 'warning') errs.push(`${m.type()}: ${m.text().slice(0, 180)}`); });
 
   await p.goto('http://127.0.0.1:3000/', { waitUntil: 'networkidle', timeout: 60000 });
   await p.waitForTimeout(2000);
@@ -88,7 +89,9 @@ const dump = async (page, label) => {
   await p.waitForTimeout(3200);                       // hum into it
   console.log('button now reads:', (await rec.innerText()).trim());
   await rec.click({ force: true });                   // stop
-  await p.waitForTimeout(3500);                       // analysis + store
+  // Basic Pitch loads TensorFlow and ~900 KB of weights on first use, then
+  // runs inference. That is seconds, not milliseconds.
+  await p.waitForTimeout(25000);                      // analysis + store
 
   const before = await dump(p, 'AFTER RECORDING');
   await p.screenshot({ path: '/tmp/claude-0/step3-after-record.png' });

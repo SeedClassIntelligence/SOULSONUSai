@@ -1,3 +1,5 @@
+import { transcribeNotes } from './providers/basicPitchProvider';
+
 /**
  * What the capture path hands back.
  *
@@ -561,9 +563,9 @@ class AudioEngineService {
   /**
    * Reads a take, and reports only what it actually read.
    *
-   * Two things here are measured: the block RMS behind the waveform, and an
-   * autocorrelation estimate of f0 over eight slices. Everything else used to
-   * be furniture around them. `dominantKey` was the literal string
+   * Two things are read: the block RMS behind the waveform, measured here, and
+   * the notes, which Basic Pitch reads behind its adapter. Everything else
+   * used to be furniture around a hand-written estimator. `dominantKey` was the literal string
    * "C Minor (Cm9)" and was returned whatever was sung. A slice with no
    * detectable pitch caused three notes -- C3, Eb3, G3 -- to be pushed into
    * `detectedNotes` and handed on as detected. An empty contour fell back to
@@ -633,125 +635,41 @@ class AudioEngineService {
       };
     }
 
-    // --- Pitch: normalised autocorrelation per slice. ---
+    // --- Notes: Basic Pitch, behind its adapter. ---
     //
-    // The previous version summed x[i] * x[i + lag] over a fixed 500 samples,
-    // stepped the lag by 2, took the largest sum it saw, and compared that sum
-    // against an amplitude threshold it shared no scale with.
+    // What stood here was a normalised autocorrelation over eight slices,
+    // written by hand. It was made accurate — eleven tones to zero cents — and
+    // it was still the wrong thing to have: monophonic, eight readings across
+    // a whole take so short notes merged, and a substitute for a part that
+    // already exists and does the job properly.
     //
-    // Three things followed. The sum was never normalised, so a lag whose
-    // window happened to hold louder samples beat a lag that actually matched.
-    // The correlation of a periodic signal is as strong at twice the period as
-    // at the period, and nothing preferred the shorter one, so it settled on
-    // sub-harmonics: fed 440 Hz it answered 110 Hz, two octaves down. And the
-    // threshold never meant anything, because a sum of 500 products and a
-    // sample amplitude are not comparable quantities.
-    //
-    // This normalises the correlation to -1..1 so the threshold is a real
-    // confidence, walks every lag rather than every other one, and then makes
-    // the octave choice explicitly: among the lags that correlate nearly as
-    // well as the best one, take the shortest. That is the fundamental; the
-    // longer ones are its multiples. A parabola through the winning peak and
-    // its neighbours recovers the fraction of a sample between lags.
-    const SLICES = 8;
-    const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-    const sliceSize = Math.floor(channelData.length / SLICES);
-    const pitchContour: number[] = [];
-    const detectedNotes: CapturedNote[] = [];
+    // Basic Pitch is polyphonic, instrument-agnostic, frame-rate accurate, and
+    // runs in this browser from weights that ship in the package. The adapter
+    // is the only file that knows any of that.
+    const read = await transcribeNotes(audioBuffer);
 
-    const F_MIN = 65; // roughly C2
-    const F_MAX = 800;
-    const minLag = Math.max(2, Math.floor(audioBuffer.sampleRate / F_MAX));
-    const maxLag = Math.floor(audioBuffer.sampleRate / F_MIN);
-
-    /** Below this the slice is not periodic enough to call a pitch. */
-    const CLARITY = 0.6;
-    /** A lag this close to the best one is the same peak family; prefer the shortest. */
-    const OCTAVE_TOLERANCE = 0.9;
-
-    let clearSlices = 0;
-
-    for (let s = 0; s < SLICES; s++) {
-      const slice = channelData.subarray(s * sliceSize, (s + 1) * sliceSize);
-      const window = Math.min(2048, slice.length - maxLag);
-      if (window < 256) continue; // too short to correlate meaningfully
-
-      const correlation = new Float32Array(maxLag + 1);
-      let best = 0;
-
-      for (let lag = minLag; lag <= maxLag; lag++) {
-        let dot = 0;
-        let energyA = 0;
-        let energyB = 0;
-        for (let i = 0; i < window; i++) {
-          const a = slice[i];
-          const b = slice[i + lag];
-          dot += a * b;
-          energyA += a * a;
-          energyB += b * b;
-        }
-        const denominator = Math.sqrt(energyA * energyB);
-        const r = denominator > 0 ? dot / denominator : 0;
-        correlation[lag] = r;
-        if (r > best) best = r;
-      }
-
-      if (best < CLARITY) continue;
-
-      // The octave decision, made on purpose rather than by accident: the
-      // first lag that correlates nearly as well as the best one.
-      let chosen = 0;
-      for (let lag = minLag; lag <= maxLag; lag++) {
-        if (correlation[lag] >= best * OCTAVE_TOLERANCE) {
-          chosen = lag;
-          break;
-        }
-      }
-      if (chosen === 0) continue;
-
-      // That crossing is on the rising edge of the peak, not on it. Climbing
-      // to the top before interpolating is the difference between a reading
-      // that is right and one that is consistently about ten cents flat --
-      // which is what it measured until this walk was added.
-      while (chosen < maxLag && correlation[chosen + 1] > correlation[chosen]) chosen++;
-
-      // Parabolic interpolation across the peak, for the fraction of a sample
-      // that the integer lag cannot carry.
-      const yPrev = correlation[chosen - 1] ?? 0;
-      const yHere = correlation[chosen];
-      const yNext = correlation[chosen + 1] ?? 0;
-      const curvature = 2 * (2 * yHere - yPrev - yNext);
-      const refinedLag = curvature !== 0 ? chosen + (yNext - yPrev) / curvature : chosen;
-
-      const f0 = audioBuffer.sampleRate / refinedLag;
-      if (f0 < F_MIN || f0 > F_MAX) continue;
-      clearSlices++;
-
-      pitchContour.push(Math.round(Math.min(1, Math.max(0, (f0 - 80) / 400)) * 100) / 100);
-
-      const midi = Math.round(69 + 12 * Math.log2(f0 / 440));
-      const startTime = (s * sliceSize) / audioBuffer.sampleRate;
-      const duration = sliceSize / audioBuffer.sampleRate;
-      const previous = detectedNotes[detectedNotes.length - 1];
-
-      if (previous && previous.midi === midi) {
-        previous.duration = Math.round((previous.duration + duration) * 100) / 100;
-      } else {
-        detectedNotes.push({
-          note: `${noteNames[midi % 12]}${Math.floor(midi / 12) - 1}`,
-          midi,
-          startTime: Math.round(startTime * 100) / 100,
-          duration: Math.round(duration * 100) / 100,
-          frequency: Math.round(f0 * 10) / 10,
-        });
-      }
+    if (!read.ok) {
+      return {
+        ...EMPTY(`${read.reason} The audio is kept and can be read again once it is available.`),
+        sampleRate: audioBuffer.sampleRate,
+        measuredSeconds: Math.round(audioBuffer.duration * 100) / 100,
+        waveformPoints,
+      };
     }
+
+    const detectedNotes: CapturedNote[] = read.notes;
+
+    // The contour the rooms draw: one normalised point per note, in time.
+    const pitchContour = detectedNotes.map((n) =>
+      Math.round(Math.min(1, Math.max(0, (n.frequency - 80) / 400)) * 100) / 100
+    );
+
 
     if (detectedNotes.length === 0) {
       return {
         ...EMPTY(
-          `${mode} pass, ${audioBuffer.duration.toFixed(1)}s: audio was present but no slice ` +
-            `carried a pitch between 65 and 700 Hz. Percussive and unvoiced material reads this way.`
+          `${mode} pass, ${audioBuffer.duration.toFixed(1)}s: audio was present, and Basic Pitch ` +
+            `found no notes in it. Percussive and unvoiced material reads this way.`
         ),
         sampleRate: audioBuffer.sampleRate,
         measuredSeconds: Math.round(audioBuffer.duration * 100) / 100,
@@ -771,10 +689,12 @@ class AudioEngineService {
       waveformPoints,
       pitchContour,
       detectedNotes,
-      // Not established. Eight autocorrelation slices are enough to say which
-      // notes were probably there and nowhere near enough to name a key, and
-      // a key is what the whole session is then written against. Step 4 puts
-      // Basic Pitch behind this; until then the honest answer is nothing.
+      // Not established, and deliberately still null. Basic Pitch now gives
+      // real notes, which is the evidence a key estimate needs -- but naming
+      // a key is its own capability (perception.key.estimate, ours to build
+      // over the transcription) and nobody has built it. A key inferred here
+      // in passing would be the literal "C Minor (Cm9)" all over again, just
+      // with better manners.
       dominantKey: null,
       fundamentalRange: {
         lowNote: lowest.note,
@@ -782,11 +702,7 @@ class AudioEngineService {
         lowFreq: lowest.frequency,
         highFreq: highest.frequency,
       },
-      basis:
-        `${mode} pass, ${audioBuffer.duration.toFixed(1)}s: ${detectedNotes.length} ` +
-        `note${detectedNotes.length === 1 ? '' : 's'} from ${clearSlices} of ${SLICES} slices by ` +
-        `normalised autocorrelation, clarity floor ${CLARITY}. Coarse in time — ${SLICES} readings ` +
-        `across the whole take, so short notes merge.`,
+      basis: `${mode} pass, ${audioBuffer.duration.toFixed(1)}s. ${read.basis}`,
     };
   }
 
