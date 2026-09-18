@@ -44,6 +44,18 @@ export type CreatorRoomSubNav =
   | 'project_context';
 
 interface CreatorTrainingViewProps {
+  /**
+   * The creator's library, owned by App.
+   *
+   * This was local state here, which meant it did not survive a reload: the
+   * audio was in IndexedDB with its hash, and the entry pointing at it was
+   * gone, so a creator came back to a library that had forgotten the take it
+   * still held. It cannot be persisted from inside this component either --
+   * saveProjectState replaces the whole record, so a second writer would wipe
+   * the tracks. One owner, and it is App.
+   */
+  sounds: CreatorSoundItem[];
+  onSoundsChange: (next: CreatorSoundItem[]) => void;
   projectName?: string;
   bpm?: number;
   timeSignature?: string;
@@ -75,7 +87,7 @@ export type CaptureMode =
 
 type UseRecordingTarget = 'save_only' | 'session_only' | 'save_and_session';
 
-const INITIAL_SOUNDS: CreatorSoundItem[] = [
+export const INITIAL_SOUNDS: CreatorSoundItem[] = [
   {
     id: 'root-1',
     name: 'Low Chest Kick 01',
@@ -290,6 +302,8 @@ const INITIAL_SOUNDS: CreatorSoundItem[] = [
 ];
 
 export const CreatorTrainingView: React.FC<CreatorTrainingViewProps> = ({
+  sounds,
+  onSoundsChange,
   projectName = 'Neon Rain',
   bpm = 92,
   timeSignature = '4/4',
@@ -302,7 +316,12 @@ export const CreatorTrainingView: React.FC<CreatorTrainingViewProps> = ({
   const [activeSubNav, setActiveSubNav] = useState<CreatorRoomSubNav>('creator_training');
 
   // Unified sounds repository
-  const [allSounds, setAllSounds] = useState<CreatorSoundItem[]>(INITIAL_SOUNDS);
+  // Reads and writes the owner's list. The functional form is kept so every
+  // existing call site works unchanged.
+  const allSounds = sounds;
+  const setAllSounds = (
+    next: CreatorSoundItem[] | ((prev: CreatorSoundItem[]) => CreatorSoundItem[])
+  ) => onSoundsChange(typeof next === 'function' ? next(sounds) : next);
 
   // Detail drawer inspection state
   const [inspectingSound, setInspectingSound] = useState<CreatorSoundItem | null>(null);

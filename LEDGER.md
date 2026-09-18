@@ -122,7 +122,7 @@ owner over waiting for Basic Pitch. See §3.2d.
 octave. **Closed** — eleven tones, all exact, and the probe is committed as
 `scripts/verify-pitch.cjs` so the claim stays checkable.
 
-### Step 3 — Prove the HUM slice end to end · **NEXT**
+### Step 3 — Prove the HUM slice end to end · **DONE** `2026-09-18`
 
 The first real vertical slice, and the one that forces the foundation to be
 real. No new features — this step only proves what steps 1 and 2 left.
@@ -134,7 +134,28 @@ audio still plays.
 **Done when:** that sequence is watched happening in a browser, with the
 reload, and §5 records it as watched rather than written.
 
-### Step 4 — Basic Pitch, in the browser
+**Closed.** Chromium was given a C4 hum as its capture device, so
+`getUserMedia` returned real audio and the app took the path it takes for a
+person. Measured after the reload:
+
+```
+asset      ast_221a2b668455…  51,773 bytes  3.12s  sha 221a2b668455…
+analysis   notes ["C4"]  — the C4 that was fed in
+library    7 sounds persisted, "Hum Take 7" first
+clip       LEAD VOCAL · "Hum Take 7" · assetId matches the asset
+blob       survived, and re-decodes: 3.12s, 44100 Hz, peak 0.502
+```
+
+The audio itself replays, not just the metadata describing it. Committed as
+`scripts/verify-hum-slice.cjs` with `scripts/make-hum-wav.py`.
+
+**What it does not prove:** a physical microphone. That is a driver question
+rather than a pipeline one, and it is the one thing left for the owner's own
+machine.
+
+Two defects were found by running it, both fixed here — §3.9 and §3.10.
+
+### Step 4 — Basic Pitch, in the browser · **NEXT**
 
 Replace the eight-slice autocorrelation with the real model. It is a 232 KB
 ONNX file on `onnxruntime-web`; it needs no server, no GPU and no Python.
@@ -291,6 +312,26 @@ are available from `analyzeAudioBlob`; use those.
 `creator/ProjectContextSubView.tsx:74` defaults `keySignature = 'F Minor'`.
 `services/initialData.ts:18` says `key: 'C MIN'`.
 
+### 3.9 The creator's library did not survive a reload · **CLOSED** by Step 3
+
+`PersistedProjectState` declared `creatorSounds`, and App neither saved nor
+loaded it. The library was local state inside `CreatorTrainingView`, and it
+could not have been persisted from there either: `saveProjectState` replaces
+the whole record rather than merging, so a second writer would have wiped the
+tracks. The audio sat in IndexedDB with a valid hash and nothing pointing at
+it. The library is now App's, with one writer.
+
+### 3.10 Saving raced restoring, and won · **CLOSED** by Step 3
+
+Both effects ran on mount. The load is asynchronous and the save is not, so
+the save went first — writing the untouched seed state over whatever was on
+disk, after which the load restored what it had just destroyed. Measured: 7
+sounds persisted after recording, 6 after the reload, the new take gone.
+
+Nothing is written now until the read has finished, including when the read
+fails: a storage error must not leave a session unable to save for the rest of
+its life.
+
 ### 3.7 Unreachable rooms · unscheduled
 
 `StudioRoom` declares `takes_revisions`, `native_brain`, `daw` and `lobby`.
@@ -357,4 +398,5 @@ or only written, and the commit.
 | 2026-09-17 | Step 0 — removed the unused `esbuild` that blocked `npm install`. | watched — install, tsc and build all pass | `pending` |
 | 2026-09-17 | Step 1 — the studio no longer manufactures performances. | **watched** — microphone denied in Chromium: Creator Training and the Booth each state the reason, the badge reads MIC UNAVAILABLE, the record button stays offering to record, and IndexedDB holds **0** assets | `b43cc67` |
 | 2026-09-18 | Step 2 — the analysis reports only what it measured, and the import reads its own file. | **watched** — silence, a 220 Hz tone and undecodable bytes each analysed in the browser; no notes invented, no key claimed, real sample rate and duration | `a03b11d` |
-| 2026-09-18 | Step 2b — the pitch estimator reads the right note in the right octave. | **watched** — `scripts/verify-pitch.cjs`: 11 tones, 110–659 Hz, sine and four-harmonic, all 0 cents. Was reading 440 Hz as 110 Hz | `pending` |
+| 2026-09-18 | Step 2b — the pitch estimator reads the right note in the right octave. | **watched** — `scripts/verify-pitch.cjs`: 11 tones, 110–659 Hz, sine and four-harmonic, all 0 cents. Was reading 440 Hz as 110 Hz | `731f371` |
+| 2026-09-18 | Step 3 — the HUM slice holds end to end, through a reload. | **watched** — `scripts/verify-hum-slice.cjs` with a C4 hum as the capture device: 51,773 bytes hashed and stored, read as C4, library and clip persisted, blob re-decoded after reload at 3.12s / 44100 Hz / peak 0.502 | `pending` |

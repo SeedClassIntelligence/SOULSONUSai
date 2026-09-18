@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
+import type { CreatorSoundItem } from './types/creatorIntelligence';
 import { Sparkles } from 'lucide-react';
 import { StudioTopBar } from './components/layout/StudioTopBar';
 import { StudioSubTabs } from './components/layout/StudioSubTabs';
@@ -9,7 +10,7 @@ import { ChangeSetModal } from './components/intelligence/ChangeSetModal';
 
 // Rooms & Workstations
 import { TheBoothView } from './components/rooms/TheBoothView';
-import { CreatorTrainingView } from './components/rooms/CreatorTrainingView';
+import { CreatorTrainingView, INITIAL_SOUNDS } from './components/rooms/CreatorTrainingView';
 import { BandSessionRow } from './components/daw/BandSessionRow';
 import { SongSectionsBar } from './components/daw/SongSectionsBar';
 import { UnifiedDAW } from './components/daw/UnifiedDAW';
@@ -71,6 +72,10 @@ export default function App() {
   const [capabilityItems, setCapabilityItems] = useState(INITIAL_CAPABILITIES);
   const [revisions, setRevisions] = useState(INITIAL_REVISIONS);
   const [smirIntent, setSmirIntent] = useState(INITIAL_SMIR_INTENT);
+  // The creator's own recordings. Held here rather than inside Creator
+  // Training because this is the one place that writes persisted state, and
+  // saveProjectState replaces the record rather than merging into it.
+  const [creatorSounds, setCreatorSounds] = useState<CreatorSoundItem[]>(INITIAL_SOUNDS);
 
   // Navigation state - default to SOUNDS & Creator Training
   const [activeTab, setActiveTab] = useState<StudioTab>('SOUNDS');
@@ -120,9 +125,25 @@ export default function App() {
     []
   );
 
-  // Load project state on mount from local storage
+  /**
+   * Restore before saving, and never the other way round.
+   *
+   * Both effects ran on mount. The load is asynchronous, the save is not, so
+   * the save went first -- writing the untouched seed state over whatever was
+   * on disk, and the load then restored what it had just destroyed. A take
+   * recorded in one session was gone in the next, while its audio sat in
+   * IndexedDB with a valid hash and nothing pointing at it.
+   *
+   * `hydrated` is that ordering, made explicit. Nothing is written until the
+   * read has finished, including when the read fails -- a storage error must
+   * not leave the session unable to save for the rest of its life.
+   */
+  const [hydrated, setHydrated] = useState(false);
+
   useEffect(() => {
-    assetStore.loadProjectState().then((saved) => {
+    assetStore
+      .loadProjectState()
+      .then((saved) => {
       if (saved) {
         if (saved.metadata) setMetadata(saved.metadata);
         if (saved.tracks) setTracks(saved.tracks);
@@ -130,12 +151,16 @@ export default function App() {
         if (saved.revisions) setRevisions(saved.revisions);
         if (saved.capabilityItems) setCapabilityItems(saved.capabilityItems);
         if (saved.smirIntent) setSmirIntent(saved.smirIntent);
+        if (saved.creatorSounds) setCreatorSounds(saved.creatorSounds);
       }
-    });
+      })
+      .catch((err) => console.warn('Could not read the saved project:', err))
+      .finally(() => setHydrated(true));
   }, []);
 
-  // Auto-save project state when critical state changes
+  // Auto-save project state when critical state changes, once restored.
   useEffect(() => {
+    if (!hydrated) return;
     assetStore.saveProjectState({
       metadata,
       tracks,
@@ -143,8 +168,9 @@ export default function App() {
       revisions,
       capabilityItems,
       smirIntent,
+      creatorSounds,
     });
-  }, [metadata, tracks, sessionPlayers, revisions, capabilityItems, smirIntent]);
+  }, [hydrated, metadata, tracks, sessionPlayers, revisions, capabilityItems, smirIntent, creatorSounds]);
 
   const togglePlay = () => {
     if (isPlaying) {
@@ -790,6 +816,8 @@ export default function App() {
           {currentRoom === 'creator_training' && (
             <div className="max-w-7xl mx-auto">
               <CreatorTrainingView
+                sounds={creatorSounds}
+                onSoundsChange={setCreatorSounds}
                 projectName={metadata.name}
                 bpm={metadata.bpm}
                 timeSignature={metadata.timeSignature}
