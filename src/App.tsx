@@ -184,10 +184,22 @@ export default function App() {
     }
   };
 
-  const handleStop = () => {
+  /**
+   * Stop the song — and if a take was in progress, keep it.
+   *
+   * This used to set isRecording to false and nothing else. The recorder kept
+   * running, the microphone stayed open, and the performance was never
+   * finalised or stored: the creator pressed record, sang, pressed the square,
+   * and the take was gone with no error and nothing in the library. Stop is
+   * the button people reach for. It cannot be the one that discards the work.
+   */
+  const handleStop = async () => {
+    if (isRecording) {
+      setIsRecording(false);
+      await finishTake();
+    }
     audioEngine.stopTransport();
     setIsPlaying(false);
-    setIsRecording(false);
     setCurrentBar(1);
     setCurrentBeat(1);
     setPlayheadTime('01:00:00');
@@ -202,37 +214,58 @@ export default function App() {
    * and filed a take anyway, with a manufactured blob behind it. Now each one
    * says what happened and the session is left alone when nothing was heard.
    */
+  /**
+   * Ends the take and keeps it. Shared by the record button and by stop,
+   * because both of them end a performance and only one of them used to.
+   */
+  const finishTake = async () => {
+    const res = await audioEngine.stopRealRecording('SING');
+
+    if (!res.ok) {
+      setCaptureNotice(`${res.reason} Nothing was added to the session.`);
+      return;
+    }
+
+    const asset = await assetStore.registerAudioAsset(
+      'Lead Vocal · Booth Capture',
+      res.blob,
+      'booth_recording',
+      Math.max(0.1, res.durationSeconds),
+      {
+        mode: 'SING',
+        pitchContour: res.pitchContour,
+        detectedNotes: res.detectedNotes,
+        waveformPoints: res.waveformPoints,
+        basis: res.basis,
+      }
+    );
+
+    handleNewRecordingTake(
+      'Lead Vocal · Booth Capture',
+      'RECORD AUDIO',
+      asset.id,
+      res.waveformPoints,
+      res.detectedNotes.map((n) => n.note).join(' → ')
+    );
+    setCaptureNotice(null);
+  };
+
+  /**
+   * Record, and do not start the song.
+   *
+   * Pressing record used to call togglePlay, so the studio began playing
+   * whatever was already on the timeline — on a fresh session, the seeded demo
+   * clips. A creator reaching for record to catch an idea got a backing track
+   * they did not ask for, playing over the thing they were trying to capture.
+   *
+   * Recording and playback are two decisions. Press play as well if you want
+   * to perform against the song; if the transport is already running, this
+   * leaves it running.
+   */
   const toggleRecord = async () => {
     if (isRecording) {
       setIsRecording(false);
-      const res = await audioEngine.stopRealRecording('SING');
-
-      if (!res.ok) {
-        setCaptureNotice(`${res.reason} Nothing was added to the session.`);
-        return;
-      }
-
-      const asset = await assetStore.registerAudioAsset(
-        'Lead Vocal · Booth Capture',
-        res.blob,
-        'booth_recording',
-        Math.max(0.1, res.durationSeconds),
-        {
-          mode: 'SING',
-          pitchContour: res.pitchContour,
-          detectedNotes: res.detectedNotes,
-          waveformPoints: res.waveformPoints,
-        }
-      );
-
-      handleNewRecordingTake(
-        'Lead Vocal · Booth Capture',
-        'RECORD AUDIO',
-        asset.id,
-        res.waveformPoints,
-        res.detectedNotes.map((n) => n.note).join(' → ')
-      );
-      setCaptureNotice(null);
+      await finishTake();
       return;
     }
 
@@ -244,7 +277,6 @@ export default function App() {
 
     setCaptureNotice(null);
     setIsRecording(true);
-    if (!isPlaying) togglePlay();
   };
 
   const toggleMetro = () => {

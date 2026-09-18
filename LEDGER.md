@@ -155,6 +155,18 @@ machine.
 
 Two defects were found by running it, both fixed here — §3.9 and §3.10.
 
+### Step 3b — Record and stop, as reported from live use · **DONE** `2026-09-18`
+
+The owner ran the studio on their own machine, pressed record in the Booth,
+and got a backing track they had not asked for and no way to keep the take.
+Both halves are §3.11 and §3.12. Fixed and verified together;
+`scripts/verify-booth-transport.cjs` holds the check.
+
+This is the first defect found by someone using the thing rather than by a
+harness, and both halves were invisible to every harness written so far — the
+slice test drove Creator Training, which does not touch the transport, and
+never pressed the stop button at all.
+
 ### Step 4 — Basic Pitch, in the browser · **NEXT**
 
 Replace the eight-slice autocorrelation with the real model. It is a 232 KB
@@ -332,6 +344,27 @@ Nothing is written now until the read has finished, including when the read
 fails: a storage error must not leave a session unable to save for the rest of
 its life.
 
+### 3.11 Record started the song · **CLOSED** by Step 3b
+
+`toggleRecord` ended with `if (!isPlaying) togglePlay()`. The Booth's mic
+circle calls it, so pressing record began playing whatever was on the
+timeline — on a fresh session, the seeded demo clips — over the idea the
+creator was trying to capture. Recording and playback are two decisions.
+Record no longer touches the transport; if it is already running, it is left
+running.
+
+### 3.12 Stop discarded the take · **CLOSED** by Step 3b
+
+`handleStop` set `isRecording` to false and did nothing else. The recorder
+kept running, the microphone stayed open, and the performance was never
+finalised or stored — no error, nothing in the library. Stop is the button
+people reach for, and there was no other way out of the Booth's record state,
+so this was not an edge case: it was the only path. Both the record button and
+stop now end a take through the same `finishTake`.
+
+Amendment F, plainly: a misclassified take is a first draft, a lost one is
+nothing.
+
 ### 3.7 Unreachable rooms · unscheduled
 
 `StudioRoom` declares `takes_revisions`, `native_brain`, `daw` and `lobby`.
@@ -399,4 +432,5 @@ or only written, and the commit.
 | 2026-09-17 | Step 1 — the studio no longer manufactures performances. | **watched** — microphone denied in Chromium: Creator Training and the Booth each state the reason, the badge reads MIC UNAVAILABLE, the record button stays offering to record, and IndexedDB holds **0** assets | `b43cc67` |
 | 2026-09-18 | Step 2 — the analysis reports only what it measured, and the import reads its own file. | **watched** — silence, a 220 Hz tone and undecodable bytes each analysed in the browser; no notes invented, no key claimed, real sample rate and duration | `a03b11d` |
 | 2026-09-18 | Step 2b — the pitch estimator reads the right note in the right octave. | **watched** — `scripts/verify-pitch.cjs`: 11 tones, 110–659 Hz, sine and four-harmonic, all 0 cents. Was reading 440 Hz as 110 Hz | `731f371` |
-| 2026-09-18 | Step 3 — the HUM slice holds end to end, through a reload. | **watched** — `scripts/verify-hum-slice.cjs` with a C4 hum as the capture device: 51,773 bytes hashed and stored, read as C4, library and clip persisted, blob re-decoded after reload at 3.12s / 44100 Hz / peak 0.502 | `pending` |
+| 2026-09-18 | Step 3 — the HUM slice holds end to end, through a reload. | **watched** — `scripts/verify-hum-slice.cjs` with a C4 hum as the capture device: 51,773 bytes hashed and stored, read as C4, library and clip persisted, blob re-decoded after reload at 3.12s / 44100 Hz / peak 0.502 | `1c9c429` |
+| 2026-09-18 | Step 3b — record no longer starts the song, and stop keeps the take. | **watched** — reported by the owner from live use; `scripts/verify-booth-transport.cjs`: playhead unmoved through a 2.5s take, and pressing stop stored a 41,051-byte booth take that was previously discarded | `pending` |
