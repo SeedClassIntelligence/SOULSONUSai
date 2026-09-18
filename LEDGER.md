@@ -113,6 +113,15 @@ answering "C Minor (Cm9)" as it did for every take before. The import path now
 reads the file it imports rather than filing every one as 4.0 seconds at
 48 kHz with the same eight waveform points.
 
+### Step 2b — Fix the pitch estimator · **DONE** `2026-09-18`
+
+Not in the original order; opened by evidence from Step 2 and chosen by the
+owner over waiting for Basic Pitch. See §3.2d.
+
+**Done when:** known frequencies read back as the right note in the right
+octave. **Closed** — eleven tones, all exact, and the probe is committed as
+`scripts/verify-pitch.cjs` so the claim stays checkable.
+
 ### Step 3 — Prove the HUM slice end to end · **NEXT**
 
 The first real vertical slice, and the one that forces the foundation to be
@@ -223,7 +232,7 @@ The waveform RMS and the autocorrelation above them are real.
 `'C3 → Eb3 → G3 (Extracted via Basic Pitch)'`. Basic Pitch is not wired. The
 notes are invented and the attribution is false.
 
-### 3.2d The pitch estimator is octaves out · **OPEN, and it is the next decision**
+### 3.2d The pitch estimator is octaves out · **CLOSED** by Step 2b
 
 Found by probing `analyzeAudioBlob` with known tones in the browser:
 
@@ -237,13 +246,17 @@ The autocorrelation takes the global maximum over lags, and for a periodic
 signal the correlation at 2T and 3T is as strong as at T, so it settles on a
 sub-harmonic. The pitch *class* comes out right; the octave does not.
 
-Step 2 made the analysis stop inventing, and this is not an invention — it is
-a real measurement of the wrong thing, which is a different defect. The basis
-string now says so in as many words, so nothing downstream over-trusts a note
-name. **Two ways to close it, and the owner picks:** normalise the correlation
-and prefer the shortest lag within ~90% of the peak, which is roughly six
-lines against code Step 4 deletes; or leave it and go straight to Basic Pitch,
-accepting that Step 3 proves the pipeline with a reading that is octave-wrong.
+**Resolved by Step 2b.** The correlation is normalised to −1..1, so the
+clarity threshold is a real confidence rather than a sum compared against an
+amplitude. Every lag is walked instead of every other one. The octave is then
+chosen deliberately — the shortest lag correlating within 90% of the best is
+the fundamental, the longer ones are its multiples. That crossing sits on the
+peak's rising edge, so the reading climbs to the actual peak before a parabola
+through it and its neighbours recovers the sub-sample fraction; without that
+climb every reading came out about ten cents flat.
+
+Measured after, by `scripts/verify-pitch.cjs`: eleven tones, pure sine and
+four-harmonic, 110 Hz to 659 Hz, every one correct to **0 cents**.
 
 ### 3.2e Analysis literals in the seeded library and other rooms · unscheduled
 
@@ -343,4 +356,5 @@ or only written, and the commit.
 | 2026-09-17 | This ledger and the working rules. | written | `ce2a1fc` |
 | 2026-09-17 | Step 0 — removed the unused `esbuild` that blocked `npm install`. | watched — install, tsc and build all pass | `pending` |
 | 2026-09-17 | Step 1 — the studio no longer manufactures performances. | **watched** — microphone denied in Chromium: Creator Training and the Booth each state the reason, the badge reads MIC UNAVAILABLE, the record button stays offering to record, and IndexedDB holds **0** assets | `b43cc67` |
-| 2026-09-18 | Step 2 — the analysis reports only what it measured, and the import reads its own file. | **watched** — silence, a 220 Hz tone and undecodable bytes each analysed in the browser; no notes invented, no key claimed, real sample rate and duration | `pending` |
+| 2026-09-18 | Step 2 — the analysis reports only what it measured, and the import reads its own file. | **watched** — silence, a 220 Hz tone and undecodable bytes each analysed in the browser; no notes invented, no key claimed, real sample rate and duration | `a03b11d` |
+| 2026-09-18 | Step 2b — the pitch estimator reads the right note in the right octave. | **watched** — `scripts/verify-pitch.cjs`: 11 tones, 110–659 Hz, sine and four-harmonic, all 0 cents. Was reading 440 Hz as 110 Hz | `pending` |
