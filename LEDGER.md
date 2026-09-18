@@ -557,6 +557,132 @@ if the owner would rather stop the bleeding first.**
 
 ---
 
+## 7. The open-source audit — what runs every capability
+
+**This is the binding table.** If a capability appears here, the part named is
+the answer. Writing a substitute for it is a defect however good the code is.
+
+Read with §6, which says what each room does today. This says what should be
+under it.
+
+### 7.0 The rule
+
+SoulSonus owns the workflow, the intent, the project state, the personas, the
+ChangeSets, the provenance and the creator relationship. Open-source providers
+perform **bounded computational jobs behind adapters**. They observe and they
+execute. They never decide what the creator meant.
+
+Basic Pitch can find the notes in a hum. It does not decide that the hum was a
+bass line meant to lock with the kick. That is ours.
+
+### 7.1 Perception — what the studio hears
+
+| Capability | Room · control | Today | Part | Runs | Licence |
+|---|---|---|---|---|---|
+| `perception.notes.transcribe` | Booth, Creator Training → RECORD | hand-written autocorrelation, 8 slices | **Basic Pitch** | in-browser, ONNX ~232 KB on onnxruntime-web | Apache-2.0 code and weights — **verify** |
+| `perception.pitch.extract` | Voice Profile, Booth | same | **Basic Pitch**, **CREPE** for continuous f0 | in-browser / service | UNVERIFIED |
+| `perception.onset.detect` | Beatbox, Clap/Tap | nothing | **BeatNet** | service | UNVERIFIED |
+| `perception.beat.detect` · `tempo.estimate` | Rhythm Profile, TAP | `TAP` button is UI only | **BeatNet** live, **Beat This** offline | service | UNVERIFIED |
+| `perception.key.estimate` | top bar KEY | a literal, `dominantKey` is null | derived from transcription | ours, over Basic Pitch | — |
+| `perception.speech.transcribe` | Songwriting, Speak mode | nothing | **faster-whisper**, `whisper.cpp` fallback | service | MIT code; weights **verify** |
+| `perception.words.align` | Vocal-to-Lyric | 3 fixed tones (§6.3) | **WhisperX**, **MFA** fallback | service | UNVERIFIED — WhisperX has had licence churn |
+
+### 7.2 Separation
+
+| Capability | Room · control | Today | Part | Runs | Licence |
+|---|---|---|---|---|---|
+| `separation.stems` | My Sounds import, Instrument Workstation, Mix | nothing | **Demucs v4** | service, GPU preferred | MIT code; weights **verify** |
+| `separation.single` | The Band, import | nothing | **Demucs**, or **ACE-Step `extract`** by task | service | UNVERIFIED |
+| curated fallback | — | — | **UVR** models, allow-listed only | service | per-model, **allow-list required** |
+
+### 7.3 Realization — turning intent into sound
+
+**ACE-Step is not one capability.** `acestep-v15-xl-base` exposes six, and XL
+Base is the variant that carries all of them. Four preserve source duration,
+which is what lets a four-bar request come back as four bars that drop onto a
+known timeline position.
+
+| Capability | ACE task | Duration locked | Room · control |
+|---|---|---|---|
+| `realization.music.generate` | `text2music` | no | The Band, creation flow |
+| `transformation.reference.cover` | `cover` | **yes** | Instrument Workstation, The Band |
+| `transformation.region.repaint` | `repaint` | **yes** | DAW / ChangeSet — highest value |
+| `separation.semantic.extract` | `extract` | **yes** | The Band, import |
+| `realization.instrument.contextual` | `lego` | **yes** | Instrument Workstation, The Band |
+| `realization.arrangement.complete` | `complete` | no | The Band |
+
+ACE's own language model is **bypassed** for `cover`, `repaint` and `extract`.
+For those three SoulSonus owns the selection, the preservation contract and
+the intent outright — ACE does not get to think about what the creator wanted.
+
+| Other realization | Room · control | Today | Part |
+|---|---|---|---|
+| `realization.instrument` sampled | Rhodes & Keys, Beat Machine | oscillators | a real sampler / SoundFont engine |
+| `realization.vocal` singing synthesis | BGV Gospel | one sine per vocalist (§6.3) | **DiffSinger** / **NNSVS**, licensed voicebanks only |
+| session player performs live | The Band | one sawtooth note (§6.3) | **Magenta RealTime 2**, or SoulSonus symbolic player |
+
+### 7.4 Engineering — mix, master, release
+
+| Capability | Room · control | Today | Part | Licence |
+|---|---|---|---|---|
+| `engineering.mix.analyze` | Mix → ANALYSE MIX | two beeps, a timer (§6.3) | Web Audio / AudioWorklet analysis, ours | — |
+| `engineering.master.analyze` | Master → RUN MEASURE | a progress bar (§6.3) | **libebur128**, `pyloudnorm` to validate | libebur128 MIT |
+| master render | Master, Release | `generatePcmWav` synthesizes (§6.4, §3.13) | **FFmpeg** / native DSP + libebur128 metrics | FFmpeg LGPL/GPL — **build matters** |
+| release encoding | Release → DOWNLOAD | a timer (§6.3) | **FFmpeg** / codec adapters | as above |
+| plugin / DSP hosting | Mix, Instrument | none | **JUCE** if commercially licensed | commercial — procurement |
+| FX prototyping | research only | none | **Spotify Pedalboard** | GPL considerations — research lane only |
+| acoustic calibration | Calibration → RUN PING | a chirp, measures nothing (§6.3) | ours, over a real impulse capture | — |
+
+### 7.5 What no open-source project should own
+
+These are the product. No provider is registered for them and none should be.
+
+| | Room |
+|---|---|
+| **SMIR** — meaning, intent, preserve, transform | SMIR Inspector |
+| **ChangeSet** — exactly what changes and what does not | ChangeSet modal |
+| **Capability resolution** — provider selection, licence policy, fallback | Capability Registry |
+| **11-stage orchestration** — workflow and stage receipts | Pipeline |
+| **Provenance and revisions** — chain of custody, lineage, commit/reject | SeedSignature, History |
+| **Session player identity** — Marcus is ours; the engine under him is replaceable | The Band |
+| **Gospel harmony direction** — choir structure, voicing, church behaviour | BGV Gospel |
+| **Beatbox semantics** — creator-specific kit vocabulary | Creator Training, Beat Machine |
+
+### 7.6 First provider set, in order
+
+1. **Basic Pitch** — in-browser, no server, no GPU. Unblocks Booth, Creator Training, Voice Profile, Instrument Workstation.
+2. **faster-whisper** — Songwriting, Speak, and the front half of Vocal-to-Lyric.
+3. **Demucs v4** — My Sounds import, Instrument Workstation, Mix.
+4. **BeatNet** — Beatbox, Clap/Tap, Rhythm Profile, tempo.
+5. **libebur128** — Mastering, the first honest number in that room.
+6. **ACE-Step XL Base**, as six capabilities — The Band, region repaint.
+7. **Magenta RT 2** — live session player response.
+8. **DiffSinger / NNSVS** — BGV, gated on voice rights.
+
+### 7.7 Licensing is part of this table, not a separate spreadsheet
+
+Every provider entry must carry, before it is cleared for release:
+
+```
+capability → provider → repository revision → checkpoint → code licence
+→ weight licence → commercial status → attribution → model hash
+→ runtime requirement
+```
+
+Code licence and checkpoint licence are **different fields on purpose**. YuE2
+ships Apache-2.0 runtime code with CC BY-NC 4.0 checkpoints. MusicGen weights
+are non-commercial despite permissive code. Both are therefore **research
+lane, never production**. DiffSinger is a third case: the code may be
+permissive while the voicebank, its training data and its rights are a
+separate admission — which matters more here than anywhere, because creator
+voice ownership is the product.
+
+Nothing in this table is marked verified. **Reading them is a task, and it is
+not done.**
+
+
+---
+
 ## 5. Log
 
 Newest last. One line per closed step: what was done, whether it was watched
