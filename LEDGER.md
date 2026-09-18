@@ -365,6 +365,13 @@ stop now end a take through the same `finishTake`.
 Amendment F, plainly: a misclassified take is a first draft, a lost one is
 nothing.
 
+### 3.13 Stem export writes synthesized audio as the creator's stems · **OPEN**
+
+See §6.4. `stemExporter.ts` falls back to `audioEngine.generatePcmWav` for any
+track without an asset-backed clip, and always for the master print, then
+names the files after the creator's tracks. The archive leaves the browser.
+Same defect as §3.1, with a longer reach.
+
 ### 3.7 Unreachable rooms · unscheduled
 
 `StudioRoom` declares `takes_revisions`, `native_brain`, `daw` and `lobby`.
@@ -416,6 +423,137 @@ lock with the kick.
 
 **Nothing generative runs in the audio callback,** and the studio stays a
 working studio when every provider is down.
+
+---
+
+## 6. What powers each room — the granular audit
+
+Taken from the source on 2026-09-18, at `3fbfc88`. Every claim below is a file
+you can open.
+
+### 6.0 The headline
+
+**No open-source model is running. Not one.** There is no `.onnx`, no `.wasm`,
+no checkpoint, no weights file anywhere in this repository, and **zero**
+network calls in the entire application — no `fetch`, no `XMLHttpRequest`, no
+`WebSocket`.
+
+Everything that works is code written by hand here, standing on four browser
+APIs:
+
+| | |
+|---|---|
+| `MediaRecorder` | captures the microphone to real bytes |
+| `AudioContext` | oscillator synthesis, and `decodeAudioData` for reading a take |
+| `crypto.subtle` | SHA-256 over asset bytes |
+| IndexedDB | persistence of assets and project state |
+
+`src/services/audioEngine.ts` is ~850 lines and is the whole sound engine:
+oscillator-and-filter voices for piano and drums, a `setInterval` transport,
+the capture path, and a normalised autocorrelation pitch estimator.
+
+### 6.1 Dependencies: declared vs actually used
+
+| Package | Imported by | What it really does here |
+|---|---|---|
+| `react`, `react-dom` | 40 files | the UI |
+| `lucide-react` | 38 files | **icons**. Nothing else |
+| `jszip` | `stemExporter.ts` | real zip archives |
+| `@google/genai` | **nothing** | declared, imported nowhere. `GEMINI_API_KEY` appears only in `.env.example` |
+| `express`, `dotenv`, `motion`, `tsx`, `autoprefixer` | **nothing** | unused |
+
+So of eleven runtime dependencies, **four are used and one of those is an
+icon set**.
+
+### 6.2 What is genuinely real
+
+Each of these was verified running, not read:
+
+| Capability | Where | Evidence |
+|---|---|---|
+| Microphone capture | `audioEngine.startRealRecording` | 51,773 real bytes captured and stored |
+| Take analysis | `audioEngine.analyzeAudioBlob` | silence, tone and garbage each handled honestly |
+| Pitch estimation | normalised autocorrelation, same file | 11 tones, 110–659 Hz, all **0 cents** |
+| SHA-256 + immutable assets | `assetStore.ts` | hashes survive reload |
+| Project persistence | IndexedDB + `localStorage` | library and clips survive reload |
+| Synth voices | `playNote`, `playDrum` | oscillators — real sound, not samples |
+| Step transport | `startTransport` | `setInterval`, drives the seeded patterns |
+| MIDI file export | `generateStandardMidiFile` | real SMF Type 0 bytes |
+| Zip export | `stemExporter.ts` + JSZip | a real archive downloads |
+
+### 6.3 What is theatre
+
+A button that looks like it did something, and did not. Each is a literal
+reading of the handler:
+
+| Button | Room | What it actually does |
+|---|---|---|
+| **ANALYSE MIX** | Mix | plays two sine beeps, waits 1200 ms on a timer, sets `hasAnalysed = true`. Analyses nothing |
+| **RUN MEASURE** | Master | advances a progress bar 25% every 220 ms. Measures nothing |
+| **RUN PING** | Calibration | plays a 1 kHz then 2.5 kHz chirp. Records nothing, measures nothing, calibrates nothing |
+| **Play take** | The Band | `playNote(65.41 \| 77.78 \| 87.31, 'sawtooth')` — one tone. That is the session player's performance |
+| **Audition harmony** | BGV Gospel | a sine per unmuted vocalist at a fixed frequency. That is the gospel stack |
+| **Audition** | Vocal-to-Lyric | three fixed notes: C4, Eb4, D4. Same three every time |
+| **DOWNLOAD** | Release | a 1200 ms timer, then a success tick. Downloads nothing |
+| **Ask** | Studio Intelligence | keyword match against canned replies. No model, no project state read |
+| Mix meters | Mix | `Math.random()` — §3.4 |
+
+### 6.4 Stem export ships synthesized audio as the creator's stems · **NEW, and it is Step 1's defect again**
+
+`stemExporter.ts` writes a real zip. What goes inside it is the problem.
+
+For each track it looks for a clip with an `assetId`. If it finds one, it
+writes the creator's real recorded bytes — correct. **If it does not, it calls
+`audioEngine.generatePcmWav(track.type, …)`**, which synthesizes audio from
+oscillators by matching the track's name: a kick-and-snare pattern for
+anything called kick or drum, a 55 Hz line for bass, a four-note chord for
+rhodes/key/piano, a formant tone for vocal.
+
+That blob is then written into the archive as:
+
+```
+01_KICK_48000_24bit.wav
+02_KEYS_48000_24bit.wav
+03_LEAD_VOCAL_48000_24bit.wav
+```
+
+And the master print is synthesized **unconditionally** — there is no
+asset-backed branch at all:
+
+```
+00_FULL_MASTER_MIX_48000_24bit.wav     ← always generatePcmWav('full_mix', …)
+```
+
+labelled in the UI as *"Rendering Full Master Stereo Mix (with -14 LUFS
+mastering chain)"*. There is no mastering chain and nothing is rendered from
+the project.
+
+So a creator exports their song, opens the zip, and finds stems that sound
+like their arrangement but contain no note they played. This is §3.1 wearing a
+different hat, and it is worse in one respect: the forged take stayed in the
+browser, and this walks out as a file the creator can send to someone.
+
+**Registered as §3.13. It is the next step after Basic Pitch — or before it,
+if the owner would rather stop the bleeding first.**
+
+### 6.5 What each room needs to become real
+
+| Room | Needs | The part named in the matrix |
+|---|---|---|
+| The Booth | already real; needs note transcription | Basic Pitch |
+| Creator Training | beat/groove reading for Beatbox, Clap/Tap | BeatNet, + a SoulSonus beatbox classifier |
+| Rhodes & Keys | MIDI capture and a sampled instrument | Web MIDI, then a SoundFont/sampler |
+| Beat Machine | durable pattern objects; the sequencer is real | SoulSonus-owned |
+| The Band | performance planning and realization | ACE-Step `lego`, Magenta RT |
+| BGV Gospel | harmony planning, then singing synthesis | SoulSonus-owned director + DiffSinger/NNSVS |
+| Vocal-to-Lyric | transcription and word timing | faster-whisper, WhisperX |
+| Songwriting | transcription | faster-whisper |
+| Mix Desk | read the project, real telemetry | Web Audio analysis — §3.3, §3.4 |
+| Mastering | real LUFS and true-peak | libebur128 |
+| Release | render the actual project | the mix path above |
+| Studio Intelligence | reasoning against project state | a model behind an adapter |
+| SMIR / Capability / Pipeline | the objects they display | SoulSonus-owned, core proprietary |
+
 
 ---
 
