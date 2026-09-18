@@ -15,17 +15,37 @@ export interface CapturedNote {
   frequency: number;
 }
 
+export interface FundamentalRange {
+  lowNote: string;
+  highNote: string;
+  lowFreq: number;
+  highFreq: number;
+}
+
+/**
+ * What a pass was actually able to read.
+ *
+ * `dominantKey` and `fundamentalRange` are nullable on purpose. Null means
+ * nothing established them, which is a real answer and the one that was
+ * missing: before this they were a hard-coded string and a pair of defaults,
+ * so every take in the library agreed it was in C minor.
+ */
+export interface TakeAnalysis {
+  /** Read off the decoded buffer, not declared. */
+  sampleRate: number | null;
+  /** The decoded length, which is the take's real duration. */
+  measuredSeconds: number | null;
+  waveformPoints: number[];
+  pitchContour: number[];
+  detectedNotes: CapturedNote[];
+  dominantKey: string | null;
+  fundamentalRange: FundamentalRange | null;
+  /** What this pass read, and what it could not. Never empty. */
+  basis: string;
+}
+
 export type TakeResult =
-  | {
-      ok: true;
-      blob: Blob;
-      durationSeconds: number;
-      waveformPoints: number[];
-      pitchContour: number[];
-      detectedNotes: CapturedNote[];
-      dominantKey: string;
-      fundamentalRange: { lowNote: string; highNote: string; lowFreq: number; highFreq: number };
-    }
+  | ({ ok: true; blob: Blob; durationSeconds: number } & TakeAnalysis)
   | { ok: false; reason: string };
 
 /** Turns a getUserMedia rejection into something worth showing a creator. */
@@ -538,126 +558,174 @@ class AudioEngineService {
 
 
   // Audio Analysis: extracts F0 pitch contour, detected MIDI notes, and waveform points
-  public async analyzeAudioBlob(
-    blob: Blob,
-    mode: string = 'HUM'
-  ): Promise<{
-    waveformPoints: number[];
-    pitchContour: number[];
-    detectedNotes: { note: string; midi: number; startTime: number; duration: number; frequency: number }[];
-    dominantKey: string;
-    fundamentalRange: { lowNote: string; highNote: string; lowFreq: number; highFreq: number };
-  }> {
+  /**
+   * Reads a take, and reports only what it actually read.
+   *
+   * Two things here are measured: the block RMS behind the waveform, and an
+   * autocorrelation estimate of f0 over eight slices. Everything else used to
+   * be furniture around them. `dominantKey` was the literal string
+   * "C Minor (Cm9)" and was returned whatever was sung. A slice with no
+   * detectable pitch caused three notes -- C3, Eb3, G3 -- to be pushed into
+   * `detectedNotes` and handed on as detected. An empty contour fell back to
+   * a hard-coded array of eight values. And the whole thing was wrapped in a
+   * catch that answered a failed decode with a four-note analysis, complete
+   * with frequencies.
+   *
+   * A pass that read nothing says it read nothing. `basis` carries that
+   * sentence, is never empty, and is what the rooms show instead of inventing
+   * a reading of their own.
+   */
+  public async analyzeAudioBlob(blob: Blob, mode: string = 'HUM'): Promise<TakeAnalysis> {
+    const EMPTY = (basis: string): TakeAnalysis => ({
+      sampleRate: null,
+      measuredSeconds: null,
+      waveformPoints: [],
+      pitchContour: [],
+      detectedNotes: [],
+      dominantKey: null,
+      fundamentalRange: null,
+      basis,
+    });
+
+    let audioBuffer: AudioBuffer;
     try {
       const ctx = this.init();
       const arrayBuffer = await blob.arrayBuffer();
-      const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
-      const channelData = audioBuffer.getChannelData(0);
+      audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
+    } catch {
+      return EMPTY('The recording could not be decoded, so nothing was read from it.');
+    }
 
-      // 1. Calculate Waveform Points (24 points)
-      const numPoints = 24;
-      const blockSize = Math.floor(channelData.length / numPoints);
-      const waveformPoints: number[] = [];
+    const channelData = audioBuffer.getChannelData(0);
+    if (channelData.length === 0) {
+      return EMPTY('The recording held no samples.');
+    }
 
-      for (let i = 0; i < numPoints; i++) {
-        let sum = 0;
-        const start = i * blockSize;
-        for (let j = 0; j < blockSize; j++) {
-          sum += Math.abs(channelData[start + j] || 0);
-        }
-        const avg = sum / blockSize;
-        waveformPoints.push(Math.round(Math.min(1, Math.max(0.08, avg * 3.5)) * 100) / 100);
+    // --- Waveform: mean absolute amplitude per block. Measured. ---
+    const NUM_POINTS = 24;
+    const blockSize = Math.max(1, Math.floor(channelData.length / NUM_POINTS));
+    const waveformPoints: number[] = [];
+    let peak = 0;
+
+    for (let i = 0; i < NUM_POINTS; i++) {
+      let sum = 0;
+      const start = i * blockSize;
+      for (let j = 0; j < blockSize; j++) {
+        const v = Math.abs(channelData[start + j] || 0);
+        sum += v;
+        if (v > peak) peak = v;
       }
+      waveformPoints.push(Math.round(Math.min(1, (sum / blockSize) * 3.5) * 100) / 100);
+    }
 
-      // 2. Pitch Detection & Pitch Contour (autocorrelation)
-      const contourPoints: number[] = [];
-      const detectedNotes: { note: string; midi: number; startTime: number; duration: number; frequency: number }[] = [];
-      const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-
-      // Analyze 8 time slices for musical notes
-      const sliceSize = Math.floor(channelData.length / 8);
-      for (let s = 0; s < 8; s++) {
-        const slice = channelData.subarray(s * sliceSize, (s + 1) * sliceSize);
-        // Autocorrelation pitch estimation
-        let bestR = 0;
-        let bestLag = 0;
-        const minLag = Math.floor(audioBuffer.sampleRate / 800); // 800 Hz max
-        const maxLag = Math.floor(audioBuffer.sampleRate / 60); // 60 Hz min
-
-        for (let lag = minLag; lag < maxLag; lag += 2) {
-          let r = 0;
-          for (let i = 0; i < 500 && i + lag < slice.length; i++) {
-            r += slice[i] * slice[i + lag];
-          }
-          if (r > bestR) {
-            bestR = r;
-            bestLag = lag;
-          }
-        }
-
-        const f0 = bestLag > 0 ? audioBuffer.sampleRate / bestLag : 196.0;
-        const normalizedContour = Math.min(1, Math.max(0.1, (f0 - 80) / 400));
-        contourPoints.push(Math.round(normalizedContour * 100) / 100);
-
-        if (bestR > 0.01 && f0 >= 65 && f0 <= 700) {
-          const midi = Math.round(69 + 12 * Math.log2(f0 / 440));
-          const noteName = `${noteNames[midi % 12]}${Math.floor(midi / 12) - 1}`;
-          const startTime = (s * sliceSize) / audioBuffer.sampleRate;
-          const duration = sliceSize / audioBuffer.sampleRate;
-
-          // Merge adjacent same notes
-          const lastNote = detectedNotes[detectedNotes.length - 1];
-          if (lastNote && lastNote.midi === midi) {
-            lastNote.duration += duration;
-          } else {
-            detectedNotes.push({
-              note: noteName,
-              midi,
-              startTime: Math.round(startTime * 100) / 100,
-              duration: Math.round(duration * 100) / 100,
-              frequency: Math.round(f0 * 10) / 10,
-            });
-          }
-        }
-      }
-
-      // Default notes if quiet
-      if (detectedNotes.length === 0) {
-        detectedNotes.push(
-          { note: 'C3', midi: 48, startTime: 0, duration: 0.8, frequency: 130.81 },
-          { note: 'Eb3', midi: 51, startTime: 0.8, duration: 0.8, frequency: 155.56 },
-          { note: 'G3', midi: 55, startTime: 1.6, duration: 0.8, frequency: 196.0 }
-        );
-      }
-
+    // Below this the input is the room, not a performance. Stated rather than
+    // guessed at: it is the threshold the note detection below also uses.
+    const NOISE_FLOOR = 0.01;
+    if (peak < NOISE_FLOOR) {
       return {
+        ...EMPTY(
+          `Nothing was heard on this pass — the loudest sample reached ${peak.toFixed(4)}, ` +
+            `below the ${NOISE_FLOOR} floor. The audio is kept; there is simply nothing in it to read.`
+        ),
+        sampleRate: audioBuffer.sampleRate,
+        measuredSeconds: Math.round(audioBuffer.duration * 100) / 100,
         waveformPoints,
-        pitchContour: contourPoints.length > 0 ? contourPoints : [0.3, 0.5, 0.7, 0.85, 0.6, 0.4, 0.7, 0.5],
-        detectedNotes,
-        dominantKey: 'C Minor (Cm9)',
-        fundamentalRange: {
-          lowNote: detectedNotes[0]?.note || 'C3',
-          highNote: detectedNotes[detectedNotes.length - 1]?.note || 'G3',
-          lowFreq: detectedNotes[0]?.frequency || 130.8,
-          highFreq: detectedNotes[detectedNotes.length - 1]?.frequency || 196.0,
-        },
-      };
-    } catch (err) {
-      // Fallback analysis
-      return {
-        waveformPoints: [0.2, 0.5, 0.8, 0.9, 0.7, 0.5, 0.8, 0.6, 0.3, 0.5, 0.7, 0.4],
-        pitchContour: [0.35, 0.5, 0.68, 0.82, 0.7, 0.55, 0.8, 0.6],
-        detectedNotes: [
-          { note: 'C3', midi: 48, startTime: 0.0, duration: 0.7, frequency: 130.81 },
-          { note: 'Eb3', midi: 51, startTime: 0.7, duration: 0.8, frequency: 155.56 },
-          { note: 'F3', midi: 53, startTime: 1.5, duration: 0.6, frequency: 174.61 },
-          { note: 'G3', midi: 55, startTime: 2.1, duration: 0.9, frequency: 196.0 },
-        ],
-        dominantKey: 'C Minor',
-        fundamentalRange: { lowNote: 'C3', highNote: 'G3', lowFreq: 130.8, highFreq: 196.0 },
       };
     }
+
+    // --- Pitch: autocorrelation over eight slices. Measured, and coarse. ---
+    const SLICES = 8;
+    const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    const sliceSize = Math.floor(channelData.length / SLICES);
+    const pitchContour: number[] = [];
+    const detectedNotes: CapturedNote[] = [];
+
+    const minLag = Math.floor(audioBuffer.sampleRate / 800); // 800 Hz ceiling
+    const maxLag = Math.floor(audioBuffer.sampleRate / 60); //  60 Hz floor
+
+    for (let s = 0; s < SLICES; s++) {
+      const slice = channelData.subarray(s * sliceSize, (s + 1) * sliceSize);
+      let bestR = 0;
+      let bestLag = 0;
+
+      for (let lag = minLag; lag < maxLag; lag += 2) {
+        let r = 0;
+        for (let i = 0; i < 500 && i + lag < slice.length; i++) r += slice[i] * slice[i + lag];
+        if (r > bestR) {
+          bestR = r;
+          bestLag = lag;
+        }
+      }
+
+      // No lag correlated, or the pitch is outside a voice's range: this slice
+      // carried no pitch. It contributes nothing rather than a filler value.
+      if (bestLag === 0 || bestR <= NOISE_FLOOR) continue;
+      const f0 = audioBuffer.sampleRate / bestLag;
+      if (f0 < 65 || f0 > 700) continue;
+
+      pitchContour.push(Math.round(Math.min(1, Math.max(0, (f0 - 80) / 400)) * 100) / 100);
+
+      const midi = Math.round(69 + 12 * Math.log2(f0 / 440));
+      const startTime = (s * sliceSize) / audioBuffer.sampleRate;
+      const duration = sliceSize / audioBuffer.sampleRate;
+      const previous = detectedNotes[detectedNotes.length - 1];
+
+      if (previous && previous.midi === midi) {
+        previous.duration = Math.round((previous.duration + duration) * 100) / 100;
+      } else {
+        detectedNotes.push({
+          note: `${noteNames[midi % 12]}${Math.floor(midi / 12) - 1}`,
+          midi,
+          startTime: Math.round(startTime * 100) / 100,
+          duration: Math.round(duration * 100) / 100,
+          frequency: Math.round(f0 * 10) / 10,
+        });
+      }
+    }
+
+    if (detectedNotes.length === 0) {
+      return {
+        ...EMPTY(
+          `${mode} pass, ${audioBuffer.duration.toFixed(1)}s: audio was present but no slice ` +
+            `carried a pitch between 65 and 700 Hz. Percussive and unvoiced material reads this way.`
+        ),
+        sampleRate: audioBuffer.sampleRate,
+        measuredSeconds: Math.round(audioBuffer.duration * 100) / 100,
+        waveformPoints,
+      };
+    }
+
+    // The range is the lowest and highest note found, not the first and last
+    // in time. Those were the same field until this was read properly.
+    const byPitch = [...detectedNotes].sort((a, b) => a.frequency - b.frequency);
+    const lowest = byPitch[0];
+    const highest = byPitch[byPitch.length - 1];
+
+    return {
+      sampleRate: audioBuffer.sampleRate,
+      measuredSeconds: Math.round(audioBuffer.duration * 100) / 100,
+      waveformPoints,
+      pitchContour,
+      detectedNotes,
+      // Not established. Eight autocorrelation slices are enough to say which
+      // notes were probably there and nowhere near enough to name a key, and
+      // a key is what the whole session is then written against. Step 4 puts
+      // Basic Pitch behind this; until then the honest answer is nothing.
+      dominantKey: null,
+      fundamentalRange: {
+        lowNote: lowest.note,
+        highNote: highest.note,
+        lowFreq: lowest.frequency,
+        highFreq: highest.frequency,
+      },
+      basis:
+        `${mode} pass, ${audioBuffer.duration.toFixed(1)}s: ${detectedNotes.length} ` +
+        `note${detectedNotes.length === 1 ? '' : 's'} from ${pitchContour.length} of ${SLICES} ` +
+        `slices by autocorrelation. Treat the octave as unreliable — this estimator locks onto ` +
+        `sub-harmonics, and measured 440 Hz as 110 Hz. Pitch class is the trustworthy part.`,
+    };
   }
+
 
   // Audition an Audio Blob or AudioAsset URL
   public playAudioBlob(blobOrUrl: Blob | string): void {

@@ -427,15 +427,18 @@ export const CreatorTrainingView: React.FC<CreatorTrainingViewProps> = ({
         setCaptureNotice(null);
         const audioBlob = realResult.blob;
         const durationSeconds = Math.max(0.6, realResult.durationSeconds);
-        const waveformPoints =
-          realResult.waveformPoints.length > 0
-            ? realResult.waveformPoints
-            : [0.2, 0.8, 0.9, 0.6, 0.7, 0.5, 0.3, 0.1];
-
+        // What was measured, and nothing where nothing was. The waveform used
+        // to fall back to a drawn-on array, and an empty detection reported
+        // "C3 → Eb3 → G3 (Extracted via Basic Pitch)" -- three notes nobody
+        // played, credited to an engine that does not run here.
+        const waveformPoints = realResult.waveformPoints;
+        const notes = realResult.detectedNotes;
         const detectedNotesStr =
-          realResult.detectedNotes.length > 0
-            ? realResult.detectedNotes.join(' → ')
-            : 'C3 → Eb3 → G3 (Extracted via Basic Pitch)';
+          notes.length > 0 ? notes.map((n) => n.note).join(' → ') : 'No notes read';
+        const keyReading = realResult.dominantKey ?? 'Not established';
+        const rangeReading = realResult.fundamentalRange
+          ? `${realResult.fundamentalRange.lowNote} - ${realResult.fundamentalRange.highNote}`
+          : 'Not established';
 
         // Register into immutable AssetStore with SHA-256 hashing
         const asset = await assetStore.registerAudioAsset(
@@ -447,29 +450,32 @@ export const CreatorTrainingView: React.FC<CreatorTrainingViewProps> = ({
             mode: activeCaptureMode,
             pitchContour: realResult.pitchContour,
             detectedNotes: realResult.detectedNotes,
-            dominantKey: realResult.dominantKey,
-            fundamentalRange: realResult.fundamentalRange,
+            dominantKey: realResult.dominantKey ?? undefined,
+            fundamentalRange: realResult.fundamentalRange ?? undefined,
+            basis: realResult.basis,
             waveformPoints,
           }
         );
 
-        // Dynamic analysis generation based on active capture mode & actual extracted audio features
-        let generatedPocket = '+2.1ms behind beat (laid-back human pocket)';
-        let generatedFunction = 'Rhythmic Foundation / Groove Driver';
-        let generatedTraits = 'Strong attack, organic acoustic harmonics';
-        let generatedReusable = 'Learned creator swing profile (62% 16th swing)';
+        // These were four literals. Every take, whatever was performed, was
+        // described as sitting "+2.1ms behind beat", carrying a "62% 16th
+        // swing", or -- for speech -- running at "4.8 syllables/sec". Nothing
+        // measured any of it. What this pass can actually say is what the
+        // engine reported, so that is what it says; the rest waits for a
+        // provider that can read groove and cadence.
+        const generatedFunction =
+          activeCaptureMode === 'Sing' || activeCaptureMode === 'Hum'
+            ? 'Melodic Vocal Motif / Harmonic Guide'
+            : activeCaptureMode === 'Speak'
+            ? 'Spoken Ad-lib / Intro Narrative'
+            : 'Rhythmic Foundation / Groove Driver';
 
-        if (activeCaptureMode === 'Sing' || activeCaptureMode === 'Hum') {
-          generatedPocket = `Smooth legato phrase in ${realResult.dominantKey || 'C Minor'} (Notes: ${detectedNotesStr})`;
-          generatedFunction = 'Melodic Vocal Motif / Harmonic Guide';
-          generatedTraits = `Key: ${realResult.dominantKey || 'C Minor'}, Range: ${realResult.fundamentalRange?.lowNote || 'C3'} - ${realResult.fundamentalRange?.highNote || 'G3'}. Extracted via Basic Pitch adapter`;
-          generatedReusable = 'Learned vocal timbre & continuous pitch contour';
-        } else if (activeCaptureMode === 'Speak') {
-          generatedPocket = 'Natural speech cadence (4.8 syllables/sec)';
-          generatedFunction = 'Spoken Ad-lib / Intro Narrative';
-          generatedTraits = 'Intimate proximity effect, dry room acoustic';
-          generatedReusable = 'Speech intonation model';
-        }
+        const generatedPocket = realResult.basis;
+        const generatedTraits =
+          notes.length > 0
+            ? `Key: ${keyReading}. Range: ${rangeReading}. Notes: ${detectedNotesStr}.`
+            : realResult.basis;
+        const generatedReusable = 'Not established — no profile has been trained from this take yet.';
 
         setAnalyzedData({
           pocket: generatedPocket,
@@ -508,16 +514,21 @@ export const CreatorTrainingView: React.FC<CreatorTrainingViewProps> = ({
             sessionProject: projectName,
             originalBpm: bpm,
             durationSeconds: durationSeconds,
-            sampleRate: '48 kHz / 24-bit',
+            sampleRate: realResult.sampleRate
+              ? `${Math.round(realResult.sampleRate / 1000)} kHz`
+              : 'Not established',
             waveformPoints: waveformPoints,
           },
           analysis: {
-            pitchCenter: realResult.dominantKey || 'C Minor (174 Hz)',
-            transientAttack: 'Instantaneous (Real Audio Captured)',
+            // pitchCenter fell back to "C Minor (174 Hz)" -- a key and a
+            // frequency, neither of them read. transientAttack and
+            // velocitySensitivity were literals, and confidenceScore was 98
+            // for every take ever captured. What is left is measured.
+            pitchCenter: keyReading,
+            fundamentalRange: rangeReading,
             timbreDescriptors: ['Original Performance', 'Verified SHA-256', activeCaptureMode],
             grooveTendency: generatedPocket,
-            velocitySensitivity: 'Dynamic',
-            confidenceScore: 98,
+            basis: realResult.basis,
             suggestedUses: [generatedFunction, 'Session timeline placement'],
           },
           derivedAssets: [
@@ -1512,13 +1523,28 @@ export const CreatorTrainingView: React.FC<CreatorTrainingViewProps> = ({
             onRecordNewClick={() => setActiveSubNav('creator_training')}
             onImportAudio={async (file: File) => {
               try {
-                // Register actual file blob into immutable AssetStore
+                // Read the file before describing it. Every import used to be
+                // filed as 4.0 seconds long at 48 kHz with the same eight
+                // waveform points and a confidence of 100, whatever was
+                // actually dropped in. The bytes were always kept; it was
+                // everything said about them that was invented.
+                const read = await audioEngine.analyzeAudioBlob(file, 'IMPORT');
+                const seconds = read.measuredSeconds ?? 0;
+
                 const asset = await assetStore.registerAudioAsset(
                   file.name.replace(/\.[^/.]+$/, ''),
                   file,
                   'imported_file',
-                  4.0,
-                  { filename: file.name, size: file.size, type: file.type }
+                  seconds,
+                  {
+                    filename: file.name,
+                    size: file.size,
+                    type: file.type,
+                    pitchContour: read.pitchContour,
+                    detectedNotes: read.detectedNotes,
+                    fundamentalRange: read.fundamentalRange ?? undefined,
+                    basis: read.basis,
+                  }
                 );
 
                 const newImport: CreatorSoundItem = {
@@ -1526,7 +1552,9 @@ export const CreatorTrainingView: React.FC<CreatorTrainingViewProps> = ({
                   assetId: asset.id,
                   name: file.name.replace(/\.[^/.]+$/, ''),
                   category: 'Audio Import',
-                  duration: '0:04.0',
+                  duration: seconds
+                    ? `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`
+                    : 'Unreadable',
                   bpm: bpm,
                   rootTag: 'imported audio',
                   musicalRole: 'Imported Audio Asset',
@@ -1538,15 +1566,20 @@ export const CreatorTrainingView: React.FC<CreatorTrainingViewProps> = ({
                     deviceInput: file.name,
                     sessionProject: projectName,
                     originalBpm: bpm,
-                    durationSeconds: 4.0,
-                    sampleRate: '48 kHz / 24-bit',
-                    waveformPoints: [0.3, 0.6, 0.9, 0.7, 0.5, 0.4, 0.2, 0.1],
+                    durationSeconds: seconds,
+                    sampleRate: read.sampleRate
+                      ? `${Math.round(read.sampleRate / 1000)} kHz`
+                      : 'Not established',
+                    waveformPoints: read.waveformPoints,
                   },
                   analysis: {
-                    transientAttack: 'Preserved File Audio',
+                    pitchCenter: read.dominantKey ?? 'Not established',
+                    fundamentalRange: read.fundamentalRange
+                      ? `${read.fundamentalRange.lowNote} - ${read.fundamentalRange.highNote}`
+                      : 'Not established',
                     timbreDescriptors: ['Custom Imported File', `SHA-256: ${asset.sha256.slice(0, 8)}`],
                     grooveTendency: 'Original File Timing',
-                    confidenceScore: 100,
+                    basis: read.basis,
                     suggestedUses: ['Arrangement Track', 'One-Shot Trigger'],
                   },
                   derivedAssets: [

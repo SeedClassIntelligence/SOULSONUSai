@@ -91,7 +91,7 @@ original work.
 **Done when:** the microphone is denied in a browser, and the studio says so
 and writes nothing. No asset is created.
 
-### Step 2 — Make the analysis report only what it measured · **NEXT**
+### Step 2 — Make the analysis report only what it measured · **DONE** `2026-09-18`
 
 §3.2. The autocorrelation is real; three things around it are not.
 
@@ -105,7 +105,15 @@ and writes nothing. No asset is created.
 **Done when:** a silent recording produces an asset with no notes and a stated
 reason, and nothing anywhere shows a key that was not derived.
 
-### Step 3 — Prove the HUM slice end to end
+**Closed.** Verified in the browser against three blobs built in the page:
+silence reads no notes and states the measured peak against the floor;
+undecodable bytes say so; a tone reports the notes it found. `dominantKey` is
+null in all three — nothing establishes a key yet, and it says so instead of
+answering "C Minor (Cm9)" as it did for every take before. The import path now
+reads the file it imports rather than filing every one as 4.0 seconds at
+48 kHz with the same eight waveform points.
+
+### Step 3 — Prove the HUM slice end to end · **NEXT**
 
 The first real vertical slice, and the one that forces the foundation to be
 real. No new features — this step only proves what steps 1 and 2 left.
@@ -190,7 +198,7 @@ iframe where permission can be refused and the demo had to survive — an
 understandable motive, and the wrong trade for a platform whose product is
 creator origin.
 
-### 3.2 The analysis states things it did not measure · Step 2
+### 3.2 The analysis states things it did not measure · **CLOSED** by Step 2
 
 `src/services/audioEngine.ts`, `analyzeAudioBlob`:
 
@@ -202,18 +210,52 @@ creator origin.
 
 The waveform RMS and the autocorrelation above them are real.
 
-### 3.2b Detected notes are stringified objects · Step 2
+### 3.2b Detected notes are stringified objects · **CLOSED** by Step 2
 
 `CreatorTrainingView` and `App` both build a take's note summary with
 `detectedNotes.join(' → ')` over an array of objects, which renders
 `[object Object] → [object Object]`. `App` is fixed as a side effect of Step 1
 (it now maps `.note`); Creator Training still does it.
 
-### 3.2c A provider that does not run is named in the result · Step 2
+### 3.2c A provider that does not run is named in the result · **CLOSED** by Step 2
 
 `CreatorTrainingView` labels an empty detection
 `'C3 → Eb3 → G3 (Extracted via Basic Pitch)'`. Basic Pitch is not wired. The
 notes are invented and the attribution is false.
+
+### 3.2d The pitch estimator is octaves out · **OPEN, and it is the next decision**
+
+Found by probing `analyzeAudioBlob` with known tones in the browser:
+
+| fed | read |
+|---|---|
+| 220 Hz | 110 Hz — one octave low |
+| 440 Hz | 110 Hz — **two octaves** low |
+| 130.81 Hz | alternates 130.9 Hz and 65.3 Hz |
+
+The autocorrelation takes the global maximum over lags, and for a periodic
+signal the correlation at 2T and 3T is as strong as at T, so it settles on a
+sub-harmonic. The pitch *class* comes out right; the octave does not.
+
+Step 2 made the analysis stop inventing, and this is not an invention — it is
+a real measurement of the wrong thing, which is a different defect. The basis
+string now says so in as many words, so nothing downstream over-trusts a note
+name. **Two ways to close it, and the owner picks:** normalise the correlation
+and prefer the shortest lag within ~90% of the peak, which is roughly six
+lines against code Step 4 deletes; or leave it and go straight to Basic Pitch,
+accepting that Step 3 proves the pipeline with a reading that is octave-wrong.
+
+### 3.2e Analysis literals in the seeded library and other rooms · unscheduled
+
+Step 2 covered the capture and import path. These are the same defect class
+elsewhere and were deliberately not touched:
+
+- `CreatorTrainingView` seeded sounds carry `confidenceScore` 90–96
+- `CreatorTrainingView:296` defaults `keySignature = 'C Minor'`
+- `RhythmProfileSubView:590` states `4.8 syllables/sec`
+- `SongwritingView:745` states `Key Lock: C Minor (Natural Scale)`
+- `ReleaseRoomView:118` states `Neo-Soul / C Minor (110 BPM)`
+- `StudioIntelligencePanel` answers a chord question with a canned progression
 
 ### 3.3 The mix desk is not the project · Step 5
 
@@ -300,4 +342,5 @@ or only written, and the commit.
 | 2026-09-17 | Studio export unpacked from the zip, unedited. Verified byte-identical to the archive reviewed. | watched — file count and diff | `e047bae` |
 | 2026-09-17 | This ledger and the working rules. | written | `ce2a1fc` |
 | 2026-09-17 | Step 0 — removed the unused `esbuild` that blocked `npm install`. | watched — install, tsc and build all pass | `pending` |
-| 2026-09-17 | Step 1 — the studio no longer manufactures performances. | **watched** — microphone denied in Chromium: Creator Training and the Booth each state the reason, the badge reads MIC UNAVAILABLE, the record button stays offering to record, and IndexedDB holds **0** assets | `pending` |
+| 2026-09-17 | Step 1 — the studio no longer manufactures performances. | **watched** — microphone denied in Chromium: Creator Training and the Booth each state the reason, the badge reads MIC UNAVAILABLE, the record button stays offering to record, and IndexedDB holds **0** assets | `b43cc67` |
+| 2026-09-18 | Step 2 — the analysis reports only what it measured, and the import reads its own file. | **watched** — silence, a 220 Hz tone and undecodable bytes each analysed in the browser; no notes invented, no key claimed, real sample rate and duration | `pending` |
