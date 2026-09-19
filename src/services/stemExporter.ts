@@ -1,7 +1,9 @@
 import JSZip from 'jszip';
-import { audioEngine } from './audioEngine';
 import { assetStore, AudioAsset } from './assetStore';
-import { Track, ProjectMetadata, AudioClip } from '../types/soulsonus';
+import { encodeWav, type BitDepth } from './wav';
+import { renderTrack, renderMaster, type TrackRender } from './timelineRender';
+import { BASIC_PITCH_PROVIDER } from './providers/basicPitchProvider';
+import { Track, ProjectMetadata } from '../types/soulsonus';
 
 /**
  * Generates a valid Standard MIDI File (SMF Type 0) byte array.
@@ -137,88 +139,92 @@ export async function exportStudioStemsZip(
     if (onProgress) onProgress({ stage, percent });
   };
 
-  updateProgress('Initializing stems audio renderer...');
+  updateProgress('Reading what is on the timeline...');
 
-  // 1. Render Track WAV Stems
+  const sampleRate = options.sampleRate === '48k' ? 48000 : 44100;
+  const bitDepth: BitDepth = options.bitDepth === '24' ? 24 : 16;
+
+  // Render every track from its own recorded audio, once, and reuse the
+  // result for both the stems and the master. A track with nothing on it
+  // renders to null, which is a real answer and is reported as one.
+  const renders: TrackRender[] = [];
+  for (let i = 0; i < tracks.length; i++) {
+    updateProgress(`Rendering ${i + 1}/${tracks.length}: ${tracks[i].name}`);
+    renders.push(await renderTrack(tracks[i], metadata, sampleRate));
+  }
+
+  const rendered = renders.filter((r) => r.buffer);
+  const empty = renders.filter((r) => !r.buffer);
+
+  // 1. Stems — only for tracks that hold audio.
+  //
+  // This used to call generatePcmWav for every track without one, which
+  // synthesized audio by matching the track's NAME -- a kick pattern for
+  // anything called kick, a 55 Hz line for bass, a chord for keys -- and filed
+  // it as 01_KICK, 02_KEYS, 03_LEAD_VOCAL. A creator opened the archive and
+  // found stems containing no note they had played. A track with no audio now
+  // produces no file, and the manifest says which tracks those were.
   if (options.includeWavStems) {
-    for (let i = 0; i < tracks.length; i++) {
-      const track = tracks[i];
-      updateProgress(`Rendering Stem ${i + 1}/${tracks.length}: ${track.name}`);
-
-      // Synthesize 4-bar or 8-bar WAV for this track
-      const sampleRate = options.sampleRate === '48k' ? 48000 : 44100;
-      const durationSeconds = (60 / metadata.bpm) * 4 * 4; // 4 bars
-
-      let wavBlob: Blob;
-      // Check if track has clips with real stored assets
-      const recordedClip = track.clips.find((c: AudioClip) => c.assetId);
-      if (recordedClip && recordedClip.assetId) {
-        const storedAsset = await assetStore.getAsset(recordedClip.assetId);
-        if (storedAsset && storedAsset.blob) {
-          wavBlob = storedAsset.blob;
-        } else {
-          wavBlob = audioEngine.generatePcmWav(track.type, durationSeconds, metadata.bpm, sampleRate);
-        }
-      } else {
-        wavBlob = audioEngine.generatePcmWav(track.type, durationSeconds, metadata.bpm, sampleRate);
-      }
-
-      const stemFileName = `0${i + 1}_${track.name.toUpperCase().replace(/[^a-zA-Z0-9]/g, '_')}_${options.sampleRate}_${options.bitDepth}bit.wav`;
-      stemsFolder.file(stemFileName, wavBlob);
+    for (let i = 0; i < renders.length; i++) {
+      const r = renders[i];
+      if (!r.buffer) continue;
+      const safeName = r.track.name.toUpperCase().replace(/[^a-zA-Z0-9]/g, '_');
+      const stemFileName =
+        `${String(i + 1).padStart(2, '0')}_${safeName}_${options.sampleRate}_${options.bitDepth}bit.wav`;
+      stemsFolder.file(stemFileName, encodeWav(r.buffer, bitDepth));
     }
   }
 
-  // 2. Render Master Stereo Print
+  // 2. Master — a sum of those same renders.
+  //
+  // It was synthesized unconditionally, with no asset-backed branch at all,
+  // and announced as a render "with -14 LUFS mastering chain". There is no
+  // mastering chain. This is a sum of the creator's audio at the levels they
+  // set, and it is named for exactly that.
   if (options.includeMasterStereo) {
-    updateProgress('Rendering Full Master Stereo Mix (with -14 LUFS mastering chain)...');
-    const masterBlob = audioEngine.generatePcmWav('full_mix', (60 / metadata.bpm) * 4 * 4, metadata.bpm, 48000);
-    stemsFolder.file(`00_FULL_MASTER_MIX_${options.sampleRate}_${options.bitDepth}bit.wav`, masterBlob);
+    updateProgress('Summing rendered tracks to a stereo print...');
+    const master = await renderMaster(renders, sampleRate);
+    if (master) {
+      stemsFolder.file(
+        `00_FULL_MIX_SUM_${options.sampleRate}_${options.bitDepth}bit.wav`,
+        encodeWav(master, bitDepth)
+      );
+    }
   }
 
-  // 3. Render MIDI Motifs
+  // 3. MIDI — from notes that were actually read.
+  //
+  // Two files used to be written here from hardcoded arrays: nineteen notes of
+  // a Cm9-Fm9-G7#9-Abmaj7 progression as RHODES_HARMONIC_PROGRESSION.mid, and
+  // seven more as LEAD_VOCAL_MELODY_CONTOUR.mid, the second commented
+  // "extracted". Nothing extracted anything. These come from the notes Basic
+  // Pitch read off the creator's own takes, and a take with no notes produces
+  // no file.
   if (options.includeMidi) {
-    updateProgress('Synthesizing Standard MIDI (SMF Type 0) files...');
-    // Rhodes / Keys chord motif (C Minor: Cmin9 - Fm9 - G7#9 - Abmaj7)
-    const keysMidiNotes = [
-      { noteNumber: 48, startBarFraction: 0.0, durationBarFraction: 0.95, velocity: 85 }, // C3
-      { noteNumber: 55, startBarFraction: 0.0, durationBarFraction: 0.95, velocity: 80 }, // G3
-      { noteNumber: 58, startBarFraction: 0.0, durationBarFraction: 0.95, velocity: 82 }, // Bb3
-      { noteNumber: 62, startBarFraction: 0.0, durationBarFraction: 0.95, velocity: 88 }, // D4
-      { noteNumber: 63, startBarFraction: 0.0, durationBarFraction: 0.95, velocity: 90 }, // Eb4
+    updateProgress('Writing MIDI from the notes read off your takes...');
+    const secondsPerBarValue = (60 / metadata.bpm) * 4;
 
-      { noteNumber: 41, startBarFraction: 1.0, durationBarFraction: 0.95, velocity: 84 }, // F2
-      { noteNumber: 53, startBarFraction: 1.0, durationBarFraction: 0.95, velocity: 80 }, // F3
-      { noteNumber: 56, startBarFraction: 1.0, durationBarFraction: 0.95, velocity: 85 }, // Ab3
-      { noteNumber: 60, startBarFraction: 1.0, durationBarFraction: 0.95, velocity: 88 }, // C4
-      { noteNumber: 63, startBarFraction: 1.0, durationBarFraction: 0.95, velocity: 92 }, // Eb4
+    for (const r of renders) {
+      if (!r.buffer) continue;
+      for (const clip of r.track.clips || []) {
+        if (!clip.assetId) continue;
+        const asset = await assetStore.getAsset(clip.assetId);
+        const notes = asset?.musicalAnalysis?.detectedNotes || [];
+        if (notes.length === 0) continue;
 
-      { noteNumber: 43, startBarFraction: 2.0, durationBarFraction: 0.95, velocity: 86 }, // G2
-      { noteNumber: 53, startBarFraction: 2.0, durationBarFraction: 0.95, velocity: 82 }, // F3
-      { noteNumber: 58, startBarFraction: 2.0, durationBarFraction: 0.95, velocity: 84 }, // Bb3
-      { noteNumber: 59, startBarFraction: 2.0, durationBarFraction: 0.95, velocity: 88 }, // B3
-      { noteNumber: 63, startBarFraction: 2.0, durationBarFraction: 0.95, velocity: 94 }, // Eb4 (D#)
-
-      { noteNumber: 44, startBarFraction: 3.0, durationBarFraction: 0.95, velocity: 85 }, // Ab2
-      { noteNumber: 55, startBarFraction: 3.0, durationBarFraction: 0.95, velocity: 82 }, // G3
-      { noteNumber: 60, startBarFraction: 3.0, durationBarFraction: 0.95, velocity: 86 }, // C4
-      { noteNumber: 63, startBarFraction: 3.0, durationBarFraction: 0.95, velocity: 90 }, // Eb4
-    ];
-
-    const midiBytes = generateStandardMidiFile(keysMidiNotes, metadata.bpm);
-    stemsFolder.file('RHODES_HARMONIC_PROGRESSION.mid', midiBytes);
-
-    // Vocal melody contour extracted MIDI
-    const vocalMidiNotes = [
-      { noteNumber: 60, startBarFraction: 0.25, durationBarFraction: 0.25, velocity: 95 },
-      { noteNumber: 63, startBarFraction: 0.5, durationBarFraction: 0.35, velocity: 100 },
-      { noteNumber: 65, startBarFraction: 0.85, durationBarFraction: 0.4, velocity: 92 },
-      { noteNumber: 67, startBarFraction: 1.25, durationBarFraction: 0.6, velocity: 108 },
-      { noteNumber: 65, startBarFraction: 1.85, durationBarFraction: 0.25, velocity: 96 },
-      { noteNumber: 63, startBarFraction: 2.1, durationBarFraction: 0.45, velocity: 98 },
-      { noteNumber: 60, startBarFraction: 2.55, durationBarFraction: 0.85, velocity: 90 },
-    ];
-    const vocalMidiBytes = generateStandardMidiFile(vocalMidiNotes, metadata.bpm);
-    stemsFolder.file('LEAD_VOCAL_MELODY_CONTOUR.mid', vocalMidiBytes);
+        const midiBytes = generateStandardMidiFile(
+          notes.map((n) => ({
+            noteNumber: n.midi,
+            startBarFraction: n.startTime / secondsPerBarValue,
+            durationBarFraction: Math.max(0.01, n.duration / secondsPerBarValue),
+            velocity: 96,
+          })),
+          metadata.bpm
+        );
+        const safe = `${r.track.name}_${clip.name}`.toUpperCase().replace(/[^A-Z0-9]+/g, '_');
+        stemsFolder.file(`${safe}.mid`, midiBytes);
+      }
+    }
   }
 
   // 4. Build SMIR Provenance Manifest & DAW Import Guide
@@ -232,7 +238,12 @@ export async function exportStudioStemsZip(
       revision: metadata.revision,
       engine: 'SoulSonus Studio v2.4 (Open-Source Architecture)',
       exportedAt: new Date().toISOString(),
-      provenanceHashSha256: assetsList[0]?.sha256 || '9e107d9d372bb6826bd81d3542a419d6dae03429f45347b74f3df9b422d3b208',
+      // No fallback. This used to default to
+      // 9e107d9d372bb6826bd81d3542a419d6dae03429f45347b74f3df9b422d3b208 --
+      // which is the SHA-256 of "The quick brown fox jumps over the lazy dog",
+      // a textbook test vector, shipped in a provenance manifest as though it
+      // were the hash of the creator's work.
+      provenanceHashSha256: assetsList[0]?.sha256 ?? null,
       seedSignatures: assetsList.map((a: AudioAsset) => ({
         id: a.id,
         name: a.name,
@@ -248,13 +259,25 @@ export async function exportStudioStemsZip(
         pan: t.pan,
         clipsCount: t.clips.length,
       })),
-      openSourceAdaptersUsed: [
-        'Spotify Basic Pitch (Apache-2.0) - Pitch and Note Contour Extraction',
-        'ACE-Step 1.5 XL (Apache-2.0) - Harmonic Intent Generation',
-        'Demucs v4 Hybrid (MIT) - 4-Stem Acoustic Separation',
-        'WhisperX (BSD-4-Clause) - Phoneme Alignment',
-        'libebur128 (MIT) - True Peak LUFS Metering',
-      ],
+      // Only what actually ran. This listed five providers -- ACE-Step,
+      // Demucs, WhisperX and libebur128 among them -- none of which are wired
+      // in this build. A provenance manifest that names engines which never
+      // touched the audio is the most dangerous fabrication in the archive,
+      // because it is the document a rights conversation would rely on.
+      openSourceProvidersUsed: [BASIC_PITCH_PROVIDER].map((p) => ({
+        capability: p.capability,
+        provider: p.id,
+        version: p.version,
+        codeLicence: p.codeLicence,
+        weightsLicence: p.weightsLicence,
+        runsIn: p.runsIn,
+      })),
+      // What is in this archive, and what is not.
+      rendered: rendered.map((r) => ({ track: r.track.name, detail: r.note })),
+      notRendered: empty.map((r) => ({ track: r.track.name, reason: r.note })),
+      masterStereo: options.includeMasterStereo
+        ? 'A sum of the rendered tracks at their set levels. Not mastered: no limiter, no loudness target, no chain.'
+        : 'not requested',
     };
     stemsFolder.file('SMIR_PROVENANCE_MANIFEST.json', JSON.stringify(manifest, null, 2));
   }

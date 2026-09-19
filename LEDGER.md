@@ -194,6 +194,25 @@ the whole application is Google Fonts, from `index.html`.
 **Still the owner's to judge:** whether a real hum from a real microphone
 comes back as the note they meant. Amendment B.v — not mine to close.
 
+### Step 4b — Kill the synthesized export · **DONE** `2026-09-19`
+
+§3.13, chosen by the owner over moving to the next provider. The archive is
+the only thing in this platform that leaves the browser, so what is inside it
+mattered more than what the studio can do next.
+
+**Done when:** an export contains the creator's audio or contains nothing, and
+says which. **Closed** — measured by `scripts/verify-stem-export.cjs`, which
+records a real hum, exports, and opens the zip:
+
+```
+before   5 synthesized stems · a synthesized master · 2 fabricated MIDI files
+         · a manifest naming 5 engines that never ran
+after    1 stem (the only track with a recording) · a master that is the sum
+         of it · 1 MIDI from the notes Basic Pitch read · a manifest with the
+         real hash, the one provider that ran, and every track that produced
+         nothing, named with the reason
+```
+
 ### Step 5 — The mix desk reads the project · **NEXT**
 
 §3.3 and §3.4. The desk builds eight hardcoded channels and animates its
@@ -383,12 +402,32 @@ stop now end a take through the same `finishTake`.
 Amendment F, plainly: a misclassified take is a first draft, a lost one is
 nothing.
 
-### 3.13 Stem export writes synthesized audio as the creator's stems · **OPEN**
+### 3.13 Stem export writes synthesized audio as the creator's stems · **CLOSED** by Step 4b
 
-See §6.4. `stemExporter.ts` falls back to `audioEngine.generatePcmWav` for any
+See §6.4. `stemExporter.ts` fell back to `audioEngine.generatePcmWav` for any
 track without an asset-backed clip, and always for the master print, then
-names the files after the creator's tracks. The archive leaves the browser.
+named the files after the creator's tracks. The archive leaves the browser.
 Same defect as §3.1, with a longer reach.
+
+**Closed.** Working it turned up two more fabrications in the same file that
+§6.4 had not reached:
+
+- **The MIDI was invented too.** `RHODES_HARMONIC_PROGRESSION.mid` was
+  nineteen hardcoded notes of a Cm9–Fm9–G7#9–Abmaj7 progression, and
+  `LEAD_VOCAL_MELODY_CONTOUR.mid` was seven more — the second commented
+  "extracted". Nothing extracted anything.
+- **The provenance manifest named five engines that never ran** — ACE-Step,
+  Demucs, WhisperX and libebur128 among them — and when no asset existed it
+  fell back to a hardcoded `provenanceHashSha256` of
+  `9e107d9d372bb6826bd81d3542a419d6dae03429f45347b74f3df9b422d3b208`, which is
+  the SHA-256 of *"The quick brown fox jumps over the lazy dog"*. A textbook
+  test vector, shipped in a rights document as the hash of the creator's work.
+
+`generatePcmWav` is deleted, 110 lines. In its place `timelineRender.ts`
+renders each track from its own stored clips at their real bar positions
+through an `OfflineAudioContext`, honouring mute and level; `wav.ts` encodes
+what was rendered and generates nothing. A track with no audio produces **no
+file**, and the manifest says which tracks those were and why.
 
 ### 3.7 Unreachable rooms · unscheduled
 
@@ -742,4 +781,5 @@ or only written, and the commit.
 | 2026-09-18 | Step 3 — the HUM slice holds end to end, through a reload. | **watched** — `scripts/verify-hum-slice.cjs` with a C4 hum as the capture device: 51,773 bytes hashed and stored, read as C4, library and clip persisted, blob re-decoded after reload at 3.12s / 44100 Hz / peak 0.502 | `1c9c429` |
 | 2026-09-18 | Step 3b — record no longer starts the song, and stop keeps the take. | **watched** — reported by the owner from live use; `scripts/verify-booth-transport.cjs`: playhead unmoved through a 2.5s take, and pressing stop stored a 41,051-byte booth take that was previously discarded | `3fbfc88` |
 | 2026-09-18 | §6 and §7 — the granular audit, and the binding open-source table. | written | `76b31da`, `26a8568` |
-| 2026-09-18 | Step 4 — Basic Pitch replaces the hand-written estimator. | **watched** — 11 tones all 0 cents; a C4 hum through the mic reads C4 + its harmonic; zero external requests | `pending` |
+| 2026-09-18 | Step 4 — Basic Pitch replaces the hand-written estimator. | **watched** — 11 tones all 0 cents; a C4 hum through the mic reads C4 + its harmonic; zero external requests | `8fad725` |
+| 2026-09-19 | Step 4b — the export ships the creator's audio or nothing. | **watched** — `scripts/verify-stem-export.cjs`: 5-track project, 1 real recording, archive holds 1 stem + its sum + 1 MIDI from read notes; 4 tracks named as producing nothing, real SHA, one provider | `pending` |
