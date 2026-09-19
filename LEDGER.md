@@ -808,13 +808,21 @@ That last row is the whole risk, and §8.3 is about it.
 | Speed | slowest | **fastest by a wide margin** | middle |
 | Cost to the owner | nothing to install | Python on Windows, and a process to keep running | nothing to install |
 
-**Unverified and blocking a real comparison:** the model download sizes.
-`huggingface.co` is unreachable from this container, so I could not measure
-them, and I am not quoting numbers from memory for a decision this size.
-Checking `whisper-tiny.en`, `base.en` and `small.en` ONNX weights is a
-five-minute task on a machine with access — and it decides route A outright,
-because a model a creator has to download before they can speak into the
-studio is a different product than one that is already there.
+**Now verified — `whisper-tiny.en` is 23.4 MB.** Measured by the owner
+running `scripts/fetch-whisper-model.mjs` on 2026-09-19; `huggingface.co` is
+unreachable from the container this was built in, so it could not be measured
+here and was not guessed.
+
+**The browser route holds.** 23.4 MB sits in the project and is served from
+it, so it is a one-time repository cost rather than something every creator
+downloads before they can speak. For comparison, the application bundle itself
+is already larger than that. Route B — Python, CTranslate2 and a process to
+keep alive on the owner's machine — buys speed this capability does not need:
+transcribing a spoken direction is assistive work, measured in seconds, and
+never in the audio callback.
+
+If a larger model is wanted later, `base.en` and `small.en` take the same
+script and the same adapter. The decision changes one constant.
 
 ### 8.3 The part that decides what this feature can promise
 
@@ -918,13 +926,12 @@ The take is **kept**. Nothing false is written either way.
 403 here — so **nobody has watched this produce a word.** Two things are
 outstanding and neither is mine:
 
-1. `node scripts/fetch-whisper-model.mjs` on the owner's machine, which also
-   finally answers **the download size** — the unverified number §8.2 said
-   decides the browser route. If it comes back unacceptable, this decision
-   should be revisited rather than lived with.
-2. Somebody speaking into Speak mode and reading what comes back.
+1. ~~The download size.~~ **Done** — 23.4 MB, and the browser route holds.
+   See §8.2.
+2. Somebody speaking into Speak mode and reading what comes back. **Still
+   open.**
 
-Until both happen this is wired, not working, and the ledger says so.
+Until that happens this is wired, not working, and the ledger says so.
 
 ---
 
