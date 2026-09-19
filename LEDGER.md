@@ -765,6 +765,108 @@ wrong.
 
 ---
 
+## 8. Scope — faster-whisper · **PROPOSED, NOT STARTED**
+
+Written 2026-09-19 at the owner's request. Nothing has been installed or
+wired. This exists so the decision is made before the work, not during it.
+
+### 8.0 Why this one is different from Basic Pitch
+
+Basic Pitch was easy in a way that will not repeat: 904 KB of weights shipped
+inside an npm package, running in the page, no server, no network. That is not
+what Whisper is.
+
+**This is the first provider that forces a decision about where compute
+lives.** The studio currently makes zero network calls and has no server. That
+is a property worth keeping on purpose — the platform rule is that SoulSonus
+stays a working studio when every provider is down — and this is the first
+time it is genuinely in tension with capability.
+
+### 8.1 Two capabilities, not one
+
+The owner's matrix separates them, correctly, and they behave very differently.
+
+| | `transcription.vocal` | `alignment.lyric.word` |
+|---|---|---|
+| Room | Speak mode, Songwriting | Vocal-to-Lyric |
+| Job | audio → words | words → per-word timings |
+| Part | faster-whisper | WhisperX / MFA |
+| Input | **spoken** | **sung** |
+
+That last row is the whole risk, and §8.3 is about it.
+
+### 8.2 Three routes, honestly costed
+
+| | A · in the browser | B · local service | C · WASM |
+|---|---|---|---|
+| Part | `@huggingface/transformers` | `faster-whisper` | `whisper.cpp` |
+| Verified | **4.3.0, Apache-2.0** | **1.2.1, MIT, Python ≥3.9** | not checked |
+| Runs | ONNX, WebGPU or WASM, in the page | Python + CTranslate2, a host process | compiled, in the page |
+| Server | none | **yes — a first for this repo** | none |
+| Network | model download on first use | localhost only after install | model download on first use |
+| Speed | slowest | **fastest by a wide margin** | middle |
+| Cost to the owner | nothing to install | Python on Windows, and a process to keep running | nothing to install |
+
+**Unverified and blocking a real comparison:** the model download sizes.
+`huggingface.co` is unreachable from this container, so I could not measure
+them, and I am not quoting numbers from memory for a decision this size.
+Checking `whisper-tiny.en`, `base.en` and `small.en` ONNX weights is a
+five-minute task on a machine with access — and it decides route A outright,
+because a model a creator has to download before they can speak into the
+studio is a different product than one that is already there.
+
+### 8.3 The part that decides what this feature can promise
+
+**Whisper is trained on speech.** Sung vocals transcribe materially worse —
+held vowels, melisma and wide pitch movement are exactly what its training
+does not cover. WhisperX gives word-level timestamps but inherits the same
+weakness, because it aligns what Whisper already decided was said.
+
+So the two capabilities are not equally served by the same decision:
+
+- **Speak mode and Songwriting notes** — spoken direction, spoken ideas,
+  "put the second verse before the bridge". Whisper is a good fit and this is
+  a real win.
+- **Vocal-to-Lyric on an actual sung take** — this is the hard one, and the
+  owner's own matrix already says so: *"custom singing aligner later"* for
+  melisma and syllable-note binding. Whisper alone does not close it.
+
+### 8.4 What I would do, and the decisions that are not mine
+
+**Split it.** Ship `transcription.vocal` for **speech** first, behind an
+adapter shaped exactly like `basicPitchProvider.ts`. Then, and only then,
+measure Whisper on a real sung take before committing to anything for
+Vocal-to-Lyric. That measurement is cheap once transcription exists and
+expensive to skip — it is the difference between a feature that works and a
+room that looks like it does, which is the defect this whole ledger is about.
+
+**Two decisions, both the owner's:**
+
+1. **Browser or service.** Route A keeps the zero-server property and costs
+   the creator a download. Route B is faster and better and puts Python on
+   the owner's machine plus a process to keep alive. Route A is my
+   recommendation *if* the model sizes come back acceptable — and that is the
+   unverified number above, so this recommendation is conditional and should
+   not be treated as settled.
+2. **Speech first, or both together.** I would ship speech first. Vocal-to-
+   Lyric currently plays three fixed tones (§6.3) — it is honest about being
+   unbuilt in a way that a bad transcription would not be.
+
+### 8.5 Before any of it — licences to actually read
+
+Nothing below is verified. Reading them is a task and it is not done.
+
+| | Status |
+|---|---|
+| `faster-whisper` code | **MIT, verified** on PyPI |
+| `@huggingface/transformers` | **Apache-2.0, verified** on npm |
+| Whisper **model weights** (OpenAI) | UNVERIFIED — commonly MIT, not read |
+| `whisper.cpp` | UNVERIFIED |
+| **WhisperX** | UNVERIFIED, and the one to check first — its licence has changed before, and §7.7 exists because code licence and weight licence are different fields |
+
+
+---
+
 ## 5. Log
 
 Newest last. One line per closed step: what was done, whether it was watched
