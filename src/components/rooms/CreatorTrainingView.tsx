@@ -469,6 +469,7 @@ export const CreatorTrainingView: React.FC<CreatorTrainingViewProps> = ({
             mode: activeCaptureMode,
             pitchContour: realResult.pitchContour,
             detectedNotes: realResult.detectedNotes,
+            transcript: realResult.transcript ?? undefined,
             dominantKey: realResult.dominantKey ?? undefined,
             fundamentalRange: realResult.fundamentalRange ?? undefined,
             basis: realResult.basis,
@@ -490,10 +491,13 @@ export const CreatorTrainingView: React.FC<CreatorTrainingViewProps> = ({
             : 'Rhythmic Foundation / Groove Driver';
 
         const generatedPocket = realResult.basis;
-        const generatedTraits =
-          notes.length > 0
-            ? `Key: ${keyReading}. Range: ${rangeReading}. Notes: ${detectedNotesStr}.`
-            : realResult.basis;
+        // A spoken take has words, not notes. Showing it a key and a range
+        // would be answering a question nobody asked.
+        const generatedTraits = realResult.transcript
+          ? `"${realResult.transcript}"`
+          : notes.length > 0
+          ? `Key: ${keyReading}. Range: ${rangeReading}. Notes: ${detectedNotesStr}.`
+          : realResult.basis;
         const generatedReusable = 'Not established — no profile has been trained from this take yet.';
 
         setAnalyzedData({

@@ -33,6 +33,8 @@ export interface AudioAsset {
     pitchContour?: number[]; // Normalized 0-1 values
     detectedNotes?: { note: string; midi: number; startTime: number; duration: number; frequency: number }[];
     dominantKey?: string;
+    /** The words, for a spoken take. Absent for every other mode. */
+    transcript?: string;
     fundamentalRange?: { lowNote: string; highNote: string; lowFreq: number; highFreq: number };
     tempoBpm?: number;
     transientPeaks?: number[];

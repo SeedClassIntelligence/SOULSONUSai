@@ -1,4 +1,5 @@
 import { transcribeNotes } from './providers/basicPitchProvider';
+import { transcribeSpeech, isSpeechMode } from './providers/whisperProvider';
 
 /**
  * What the capture path hands back.
@@ -33,6 +34,14 @@ export interface FundamentalRange {
  * so every take in the library agreed it was in C minor.
  */
 export interface TakeAnalysis {
+  /**
+   * The words, for a spoken take only.
+   *
+   * Null for every other mode — not because transcription failed, but because
+   * it was never the right question. Whisper reads speech; a hum has no words
+   * and a sung take is a problem it does not solve (ledger §8.3).
+   */
+  transcript: string | null;
   /** Read off the decoded buffer, not declared. */
   sampleRate: number | null;
   /** The decoded length, which is the take's real duration. */
@@ -579,6 +588,7 @@ class AudioEngineService {
    */
   public async analyzeAudioBlob(blob: Blob, mode: string = 'HUM'): Promise<TakeAnalysis> {
     const EMPTY = (basis: string): TakeAnalysis => ({
+      transcript: null,
       sampleRate: null,
       measuredSeconds: null,
       waveformPoints: [],
@@ -635,6 +645,28 @@ class AudioEngineService {
       };
     }
 
+    // --- Speech: Whisper, behind its adapter. ---
+    //
+    // A spoken take is a different question from a performed one. Asking a
+    // note transcriber what somebody said produces notes nobody played, so
+    // the mode decides which provider is asked, and only one of them is.
+    if (isSpeechMode(mode)) {
+      const heard = await transcribeSpeech(audioBuffer);
+      return {
+        transcript: heard.ok ? heard.text : null,
+        sampleRate: audioBuffer.sampleRate,
+        measuredSeconds: Math.round(audioBuffer.duration * 100) / 100,
+        waveformPoints,
+        pitchContour: [],
+        detectedNotes: [],
+        dominantKey: null,
+        fundamentalRange: null,
+        basis: heard.ok
+          ? `${mode} pass, ${audioBuffer.duration.toFixed(1)}s. ${heard.basis}`
+          : `${mode} pass, ${audioBuffer.duration.toFixed(1)}s. ${heard.reason}`,
+      };
+    }
+
     // --- Notes: Basic Pitch, behind its adapter. ---
     //
     // What stood here was a normalised autocorrelation over eight slices,
@@ -684,6 +716,7 @@ class AudioEngineService {
     const highest = byPitch[byPitch.length - 1];
 
     return {
+      transcript: null,
       sampleRate: audioBuffer.sampleRate,
       measuredSeconds: Math.round(audioBuffer.duration * 100) / 100,
       waveformPoints,

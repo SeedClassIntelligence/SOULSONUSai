@@ -765,10 +765,11 @@ wrong.
 
 ---
 
-## 8. Scope — faster-whisper · **PROPOSED, NOT STARTED**
+## 8. Whisper — scope, and what was built · **Step 4c DONE** `2026-09-19`
 
-Written 2026-09-19 at the owner's request. Nothing has been installed or
-wired. This exists so the decision is made before the work, not during it.
+Scoped first, then built on the owner's decision: **browser route, speech
+first.** §8.0–§8.5 are the scope as written before any work. §8.6 is what was
+actually done.
 
 ### 8.0 Why this one is different from Basic Pitch
 
@@ -865,6 +866,66 @@ Nothing below is verified. Reading them is a task and it is not done.
 | **WhisperX** | UNVERIFIED, and the one to check first — its licence has changed before, and §7.7 exists because code licence and weight licence are different fields |
 
 
+### 8.6 What was built
+
+**`@huggingface/transformers@4.3.0`, Apache-2.0**, behind
+`src/services/providers/whisperProvider.ts` — the same adapter shape as Basic
+Pitch. Provider structures stop at that file; what comes back is a string.
+
+**The model is served from this project, not fetched at runtime.**
+`scripts/fetch-whisper-model.mjs` downloads it once, and
+`allowRemoteModels = false` means transformers.js cannot reach out on its own.
+Three reasons, in the order they matter: the studio keeps working with no
+network; the weights that shipped stay knowable, which matters in a platform
+whose product is provenance; and a creator does not wait on a download the
+first time they speak.
+
+**Speech only, and the mode decides.** A spoken take goes to Whisper; a hum
+goes to Basic Pitch; neither is asked the other's question. Asking a note
+transcriber what somebody said produces notes nobody played.
+
+**Vocal-to-Lyric is deliberately not wired to it** (§8.3). That room still
+says it is unbuilt, which is more honest than a confident wrong transcription
+of somebody singing.
+
+#### Two things found while building
+
+- **`onnxruntime-node` broke the install.** It is a transitive dependency for
+  server-side use and downloads a native binary on install, which this
+  environment blocks. Installed with `--ignore-scripts`; the browser build
+  resolves to `dist/transformers.web.js` and never touches it.
+- **Vite answers a missing model with HTTP 200 and `index.html`.** The SPA
+  fallback. The adapter's "is it installed" check originally keyed on 404,
+  which would never fire — the owner would have seen a JSON parse error
+  instead of an instruction. Presence is now established by fetching
+  `config.json` and reading it.
+
+#### Measured — `scripts/verify-speech.cjs`
+
+```
+mode routing   SPEAK true · Speak true · HUM false · Beatbox false
+SPEAK, no model   transcript null · notes 0 · key null
+                  basis: "The speech model is not installed, so this take was
+                  kept but not read. Run: node scripts/fetch-whisper-model.mjs"
+HUM, same audio   transcript null · 1 note read by Basic Pitch
+```
+
+The take is **kept**. Nothing false is written either way.
+
+#### What is NOT proven, and by whom
+
+`huggingface.co` is unreachable from this container — the fetch script returns
+403 here — so **nobody has watched this produce a word.** Two things are
+outstanding and neither is mine:
+
+1. `node scripts/fetch-whisper-model.mjs` on the owner's machine, which also
+   finally answers **the download size** — the unverified number §8.2 said
+   decides the browser route. If it comes back unacceptable, this decision
+   should be revisited rather than lived with.
+2. Somebody speaking into Speak mode and reading what comes back.
+
+Until both happen this is wired, not working, and the ledger says so.
+
 ---
 
 ## 5. Log
@@ -884,4 +945,6 @@ or only written, and the commit.
 | 2026-09-18 | Step 3b — record no longer starts the song, and stop keeps the take. | **watched** — reported by the owner from live use; `scripts/verify-booth-transport.cjs`: playhead unmoved through a 2.5s take, and pressing stop stored a 41,051-byte booth take that was previously discarded | `3fbfc88` |
 | 2026-09-18 | §6 and §7 — the granular audit, and the binding open-source table. | written | `76b31da`, `26a8568` |
 | 2026-09-18 | Step 4 — Basic Pitch replaces the hand-written estimator. | **watched** — 11 tones all 0 cents; a C4 hum through the mic reads C4 + its harmonic; zero external requests | `8fad725` |
-| 2026-09-19 | Step 4b — the export ships the creator's audio or nothing. | **watched** — `scripts/verify-stem-export.cjs`: 5-track project, 1 real recording, archive holds 1 stem + its sum + 1 MIDI from read notes; 4 tracks named as producing nothing, real SHA, one provider | `pending` |
+| 2026-09-19 | Step 4b — the export ships the creator's audio or nothing. | **watched** — `scripts/verify-stem-export.cjs`: 5-track project, 1 real recording, archive holds 1 stem + its sum + 1 MIDI from read notes; 4 tracks named as producing nothing, real SHA, one provider | `3ce8da3` |
+| 2026-09-19 | §8 — Whisper scoped: browser vs service, speech vs singing. | written | `9907a58` |
+| 2026-09-19 | Step 4c — Whisper wired for speech, local models only. | **partly watched** — routing, the missing-model instruction and the kept take all verified; **no word has been transcribed by anyone**, because HF is unreachable here. Owner runs the fetch script and speaks into it | `pending` |
