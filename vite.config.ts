@@ -5,6 +5,10 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    // Served from the site root in development and from /<repo>/ on GitHub
+    // Pages. Set by the deploy workflow; anything that builds a URL to a
+    // shipped file reads import.meta.env.BASE_URL rather than assuming '/'.
+    base: process.env.PAGES_BASE || '/',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {

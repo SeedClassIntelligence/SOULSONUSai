@@ -32,7 +32,7 @@
 /** Whisper is trained at 16 kHz, mono. */
 const MODEL_SAMPLE_RATE = 16000;
 const MODEL_ID = 'whisper-tiny.en';
-const LOCAL_MODEL_ROOT = '/models/whisper/';
+const LOCAL_MODEL_ROOT = `${import.meta.env.BASE_URL}models/whisper/`;
 
 export const WHISPER_PROVIDER = {
   capability: 'transcription.vocal',

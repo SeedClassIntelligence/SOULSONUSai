@@ -30,7 +30,7 @@ import type { CapturedNote } from '../audioEngine';
 
 /** Basic Pitch is trained at this rate and mono. Anything else is resampled. */
 const MODEL_SAMPLE_RATE = 22050;
-const MODEL_URL = '/models/basic-pitch/model.json';
+const MODEL_URL = `${import.meta.env.BASE_URL}models/basic-pitch/model.json`;
 
 export const BASIC_PITCH_PROVIDER = {
   capability: 'perception.notes.transcribe',

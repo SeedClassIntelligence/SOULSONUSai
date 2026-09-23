@@ -1,0 +1,67 @@
+# Builds the studio and publishes it to GitHub Pages.
+#
+# The build is a static site: no server, no API keys, no origin logic. The one
+# thing that is not in the repository is the Whisper speech model, which is
+# gitignored like every other weight file, so the workflow fetches it before
+# building. That step is deliberately its own, and deliberately fatal: a
+# studio that quietly ships without the model is a studio whose Speak room is
+# dead with no explanation.
+name: deploy
+
+on:
+  push:
+    branches: [claude/extract-baseline]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time. A queued run is allowed to finish rather than be
+# cancelled, so a published site is never half-replaced.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # --ignore-scripts on purpose: onnxruntime-node's postinstall pulls
+      # native binaries this build never loads. The browser build resolves
+      # transformers.js to dist/transformers.web.js.
+      - run: npm ci --ignore-scripts
+
+      # Basic Pitch's weights are copied out of node_modules by prebuild.
+      # Whisper's are downloaded here, and a failure stops the deploy.
+      - run: node scripts/fetch-whisper-model.mjs
+
+      - run: npm run build
+        env:
+          PAGES_BASE: /SOULSONUSai/
+
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
